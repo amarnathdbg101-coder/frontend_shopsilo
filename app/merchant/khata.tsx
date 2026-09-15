@@ -20,6 +20,7 @@ import { KhataCustomerCard } from "@/features/merchant/components/KhataCustomerC
 import { KhataPannaView } from "@/features/merchant/components/KhataPannaView";
 import { KhataCustomerQRScannerModal } from "@/features/merchant/components/KhataCustomerQRScannerModal";
 import { ExpressQuickUdharModal } from "@/features/merchant/components/ExpressQuickUdharModal";
+import { AIVoiceKhataModal } from "@/features/merchant/components/AIVoiceKhataModal";
 import { useMyShop } from "@/features/merchant/api/useMerchantStore";
 import { KhataCustomer } from "@/features/merchant/types";
 import { formatCurrency } from "@/utils/format";
@@ -35,10 +36,7 @@ import {
   QrCode,
   Zap,
   RotateCcw,
-  CheckCircle2,
-  Clock,
-  ArrowDownLeft,
-  ArrowUpRight,
+  Mic,
 } from "lucide-react-native";
 
 type FilterTab = "ALL" | "DUE_TODAY" | "HIGH_DUE" | "DISPUTED";
@@ -63,6 +61,9 @@ export default function MerchantKhataScreen() {
   // Express Quick Entry Modal state
   const [quickEntryVisible, setQuickEntryVisible] = useState(false);
   const [quickCustomer, setQuickCustomer] = useState<KhataCustomer | null>(null);
+
+  // AI Voice Khata Modal state
+  const [voiceModalVisible, setVoiceModalVisible] = useState(false);
 
   // 5-Second Floating Undo Banner State
   const [undoToast, setUndoToast] = useState<{
@@ -118,45 +119,62 @@ export default function MerchantKhataScreen() {
     }).length;
   }, [customers]);
 
-  // Instant search matches (top 4)
-  const searchMatches = useMemo(() => {
-    if (!search.trim() || !customers) return [];
-    const q = search.trim().toLowerCase();
-    return customers
-      .filter((c) => c.customer_name.toLowerCase().includes(q) || c.customer_mobile.includes(q))
-      .slice(0, 4);
-  }, [search, customers]);
-
-  // Recent 6 Customers for 1-tap quick bar
-  const recentCustomers = useMemo(() => {
-    if (!customers) return [];
-    return customers.slice(0, 6);
+  const highDueCount = useMemo(() => {
+    if (!customers) return 0;
+    return customers.filter((c) => c.current_balance >= 2000).length;
   }, [customers]);
 
-  const handleOpenPanna = (customer: KhataCustomer) => {
+  const disputeCount = useMemo(() => {
+    if (!customers) return 0;
+    return customers.filter(
+      (c) => (c as any).dispute_status === "PENDING" || (c as any).has_dispute
+    ).length;
+  }, [customers]);
+
+  // Recent/Frequent active customers for 1-tap fast access
+  const recentCustomers = useMemo(() => {
+    if (!customers || customers.length === 0) return [];
+    return [...customers]
+      .sort((a, b) => {
+        const tA = new Date(a.last_activity_at || 0).getTime();
+        const tB = new Date(b.last_activity_at || 0).getTime();
+        return tB - tA;
+      })
+      .slice(0, 6);
+  }, [customers]);
+
+  // Search matches for instant Quick Udhar selection
+  const searchMatches = useMemo(() => {
+    if (!search || !customers) return [];
+    const q = search.toLowerCase();
+    return customers
+      .filter(
+        (c) =>
+          c.customer_name.toLowerCase().includes(q) ||
+          c.customer_mobile.includes(q)
+      )
+      .slice(0, 3);
+  }, [customers, search]);
+
+  const handleOpenCustomer = (customer: KhataCustomer) => {
     setSelectedCustomer(customer);
     setPannaVisible(true);
   };
 
-  const handleOpenQuickEntry = (customer: KhataCustomer) => {
-    setQuickCustomer(customer);
-    setQuickEntryVisible(true);
-  };
-
   const handleCustomerScanned = (scanned: { phone: string; name?: string }) => {
-    const cleanPhone = scanned.phone.replace(/[^0-9]/g, "").slice(-10);
-    const existing = customers?.find((c) => {
-      const p = c.customer_mobile.replace(/[^0-9]/g, "").slice(-10);
-      return p === cleanPhone;
-    });
-
+    setScannerVisible(false);
+    const existing = customers?.find(
+      (c) => c.customer_mobile === scanned.phone || c.customer_mobile.endsWith(scanned.phone)
+    );
     if (existing) {
-      handleOpenQuickEntry(existing);
+      setSelectedCustomer(existing);
+      setPannaVisible(true);
     } else {
+      const cleanMobile = scanned.phone.replace(/[^0-9]/g, "");
       const newCust: KhataCustomer = {
         id: "",
-        customer_name: scanned.name?.trim() || `Customer ${cleanPhone.slice(-4)}`,
-        customer_mobile: cleanPhone,
+        customer_name: scanned.name || `Customer ${cleanMobile.slice(-4)}`,
+        customer_mobile: cleanMobile.length === 10 ? cleanMobile : cleanMobile.slice(-10),
         credit_limit: 0,
         current_balance: 0,
         closure_status: "ACTIVE",
@@ -167,17 +185,26 @@ export default function MerchantKhataScreen() {
     }
   };
 
+  // Launch express modal for specific customer
+  const handleOpenQuickEntry = (cust: KhataCustomer) => {
+    setQuickCustomer(cust);
+    setQuickEntryVisible(true);
+  };
+
+  // Handle successful express entry with 5-second undo toast
   const handleQuickSuccess = (result: {
     customer: KhataCustomer;
     amount: number;
     type: "CREDIT" | "PAYMENT";
-    notes: string;
+    isAutoOtp?: boolean;
   }) => {
     refetchCustomers();
     refetchAging();
 
-    // Trigger 5-second Floating Undo Toast
-    if (undoToast?.timer) clearTimeout(undoToast.timer);
+    if (undoToast?.timer) {
+      clearTimeout(undoToast.timer);
+    }
+
     const timer = setTimeout(() => {
       setUndoToast(null);
     }, 6000);
@@ -281,6 +308,22 @@ export default function MerchantKhataScreen() {
 
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Voice Khata"
+          onPress={() => setVoiceModalVisible(true)}
+          style={[
+            styles.voiceBtn,
+            {
+              backgroundColor: isDark ? "#2e1065" : "#f5f3ff",
+              borderColor: "#c4b5fd",
+            },
+          ]}
+        >
+          <Mic size={17} color="#7c3aed" />
+          <Text style={styles.voiceBtnText}>Bol Kar</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
           accessibilityLabel="Scan customer khata QR"
           onPress={() => setScannerVisible(true)}
           style={[styles.scanQrBtn, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
@@ -314,7 +357,7 @@ export default function MerchantKhataScreen() {
             >
               <View style={{ flex: 1 }}>
                 <Text style={[styles.matchName, { color: colors.text }]}>{match.customer_name}</Text>
-                <Text style={[styles.matchPhone, { color: colors.textMuted }]}>📞 {match.customer_mobile}</Text>
+                <Text style={[styles.matchPhone, { color: colors.textMuted }]}>📱 {match.customer_mobile}</Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={[styles.matchBal, { color: match.current_balance > 0 ? "#dc2626" : "#16a34a" }]}>
@@ -392,7 +435,7 @@ export default function MerchantKhataScreen() {
           ]}
         >
           <Text style={[styles.tabBtnText, { color: activeTab === "DUE_TODAY" ? "#fff" : colors.text }]}>
-            📅 Due Today ({dueTodayCount})
+            ⏰ Due Today ({dueTodayCount})
           </Text>
         </Pressable>
 
@@ -406,48 +449,68 @@ export default function MerchantKhataScreen() {
           ]}
         >
           <Text style={[styles.tabBtnText, { color: activeTab === "HIGH_DUE" ? "#fff" : colors.text }]}>
-            ⚠️ High Due (&gt; ₹2k)
+            ⚠️ High Due &gt;₹2k ({highDueCount})
           </Text>
         </Pressable>
+
+        {disputeCount > 0 && (
+          <Pressable
+            onPress={() => setActiveTab("DISPUTED")}
+            style={[
+              styles.tabBtn,
+              activeTab === "DISPUTED"
+                ? { backgroundColor: "#ef4444" }
+                : { backgroundColor: colors.surface, borderColor: "#fecaca", borderWidth: 1 },
+            ]}
+          >
+            <Text style={[styles.tabBtnText, { color: activeTab === "DISPUTED" ? "#fff" : "#ef4444" }]}>
+              🚨 Disputed ({disputeCount})
+            </Text>
+          </Pressable>
+        )}
       </View>
 
-      {loadingAging || loadingCustomers ? (
-        <LoadingState message="Loading Khata ledger..." />
+      {/* Khata Aging Recovery Analysis Header */}
+      {aging && (
+        <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+          <KhataAgingCard aging={aging} />
+        </View>
+      )}
+
+      {/* Main Customers List */}
+      {loadingCustomers ? (
+        <LoadingState message="Bahi-Khata load ho raha hai..." />
       ) : (
         <FlatList
           data={filteredCustomers}
-          keyExtractor={(item, idx) => item.id || `${item.customer_mobile}_${idx}`}
-          ListHeaderComponent={activeTab === "ALL" ? <KhataAgingCard aging={aging || undefined} /> : null}
+          keyExtractor={(item) => item.id || item.customer_mobile}
+          contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <KhataCustomerCard
               customer={item}
-              onRecordPayment={handleOpenQuickEntry}
-              onPressCard={handleOpenPanna}
+              onRecordPayment={(cust) => handleOpenQuickEntry(cust)}
+              onPressCard={(cust) => handleOpenCustomer(cust)}
             />
           )}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <BookOpen size={40} color={colors.textMuted} />
+              <BookOpen size={48} color={colors.textMuted} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                {activeTab === "DUE_TODAY"
-                  ? "Aaj Koi Promise Due Nahi Hai"
-                  : "Koi Khata Panna Nahi Mila"}
+                {search ? "Koi customer nahi mila" : "Abhi koi Udhar Khata nahi hai"}
               </Text>
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-                {activeTab === "DUE_TODAY"
-                  ? "Aaj kisi customer ka repayment date schedule nahi hai."
-                  : 'Naya hisab shuru karne ke liye "Naya Panna" dabayein aur customer ka number enter karein.'}
+                {search
+                  ? "Dusra naam ya phone number try karein ya naya panna banayein."
+                  : "Upar diye gaye '+ Naya Panna' button ya '🎙️ Bol Kar' par tap karke customer ka udhar hisab shuru karein."}
               </Text>
             </View>
           }
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
+          refreshing={loadingCustomers || loadingAging}
           onRefresh={handleRefresh}
-          refreshing={loadingCustomers}
         />
       )}
 
-      {/* 5-Second Floating Undo Banner (Typo Protection Loophole Fix) */}
+      {/* 5-Second Undo Toast Banner */}
       {!!undoToast && undoToast.visible && (
         <View style={styles.undoFloatingBanner}>
           <View style={{ flex: 1 }}>
@@ -473,6 +536,22 @@ export default function MerchantKhataScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* 🎙️ AI Voice Khata Modal */}
+      <AIVoiceKhataModal
+        visible={voiceModalVisible}
+        customers={customers || []}
+        onClose={() => setVoiceModalVisible(false)}
+        onManualPrefill={(customer, type, amount, note) => {
+          setQuickCustomer(customer);
+          setQuickEntryVisible(true);
+        }}
+        onSuccess={(msg) => {
+          playSoundboxTone("credit");
+          Alert.alert("Success", msg);
+          handleRefresh();
+        }}
+      />
 
       {/* ⚡ Express Quick Udhar Modal */}
       <ExpressQuickUdharModal
@@ -587,6 +666,20 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     height: "100%",
+  },
+  voiceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 40,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    gap: 5,
+  },
+  voiceBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#7c3aed",
   },
   scanQrBtn: {
     width: 40,

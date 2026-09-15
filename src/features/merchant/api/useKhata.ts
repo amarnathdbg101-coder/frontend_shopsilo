@@ -11,6 +11,10 @@ import {
 } from "../types";
 import { useAuthStore } from "@/store/useAuthStore";
 
+const generateIdempotencyKey = (prefix: string = "khata_app") => {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+};
+
 export const useKhataCustomers = (search?: string, enabled: boolean = true) => {
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -82,9 +86,15 @@ export const useRecordCredit = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: RecordCreditRequest) => {
+      const idempotencyKey = generateIdempotencyKey("credit");
       const res = await apiClient.post<ApiResponse<{ id: string }>>(
         Endpoints.MERCHANT.KHATA,
-        payload
+        payload,
+        {
+          headers: {
+            "X-Idempotency-Key": idempotencyKey,
+          },
+        }
       );
       return res.data.data;
     },
@@ -99,9 +109,15 @@ export const useRecordKhataPayment = (mobile: string) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: RecordPaymentRequest) => {
+      const idempotencyKey = generateIdempotencyKey("payment");
       const res = await apiClient.post<ApiResponse<{ id: string }>>(
         Endpoints.MERCHANT.KHATA_PAYMENT(mobile),
-        payload
+        payload,
+        {
+          headers: {
+            "X-Idempotency-Key": idempotencyKey,
+          },
+        }
       );
       return res.data.data;
     },
