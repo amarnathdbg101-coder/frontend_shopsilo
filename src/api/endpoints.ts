@@ -30,6 +30,7 @@ export const Endpoints = {
     BY_SLUG: (slug: string) => `/products/slug/${slug}`,
     SCAN: (code: string) => `/products/scan/${code}`,
     UPLOAD_IMAGES: "/products/images",
+    SUGGEST_MEDIA: "/products/media/suggest",
     BULK_IMPORT: "/shops/me/products/bulk-import",
     IMPORT_TEMPLATE: "/shops/me/products/import-template.csv",
   },

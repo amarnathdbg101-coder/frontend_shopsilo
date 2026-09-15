@@ -10,9 +10,9 @@ interface UploadShopMediaResult {
 }
 
 /**
- * Uploads up to 4 product photos directly to Go backend / Cloudflare R2
+ * Uploads up to 4 product photos directly to Go backend / Cloudflare R2 with SHA-256 deduplication
  */
-export async function uploadProductImages(uris: string[]): Promise<string[]> {
+export async function uploadProductImages(uris: string[], productCode: string = ""): Promise<string[]> {
   if (!uris || uris.length === 0) return [];
 
   const token = useAuthStore.getState().accessToken || (await SecureStorage.getAccessToken());
@@ -25,6 +25,10 @@ export async function uploadProductImages(uris: string[]): Promise<string[]> {
     const fileName = `product_${Date.now()}_${i}.jpg`;
     const mimeType = "image/jpeg";
     await appendFileToFormData(formData, "images", uri, fileName, mimeType);
+  }
+
+  if (productCode) {
+    formData.append("product_code", productCode);
   }
 
   const response = await uploadMultipart<{
@@ -42,6 +46,32 @@ export async function uploadProductImages(uris: string[]): Promise<string[]> {
   }
 
   return json.data.images as string[];
+}
+
+/**
+ * Global Media Vault: Searches for existing master catalog images matching Barcode/SKU or Name
+ */
+export async function suggestMasterImages(code: string = "", name: string = ""): Promise<Array<{
+  id: string;
+  product_code: string;
+  image_url: string;
+  is_verified_master: boolean;
+}>> {
+  try {
+    const params = new URLSearchParams();
+    if (code) params.append("code", code);
+    if (name) params.append("name", name);
+    const url = `${Config.API_BASE_URL}${Endpoints.PRODUCTS.SUGGEST_MEDIA}?${params.toString()}`;
+    const token = useAuthStore.getState().accessToken || (await SecureStorage.getAccessToken());
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json?.data || [];
+  } catch {
+    return [];
+  }
 }
 
 /**
