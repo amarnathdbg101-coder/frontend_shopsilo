@@ -21,7 +21,6 @@ import {
 } from "../api/useAddProduct";
 import { Config } from "@/constants/config";
 import { Endpoints } from "@/api/endpoints";
-import { useAuthStore } from "@/store/useAuthStore";
 import {
   FileSpreadsheet,
   Download,
@@ -157,6 +156,8 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       if (priceIdx === -1) priceIdx = 1;
     }
 
+    const cleanNum = (str: string) => str.replace(/[^0-9.]/g, "");
+
     const items: BulkImportItem[] = [];
 
     for (let i = startIndex; i < lines.length; i++) {
@@ -167,25 +168,27 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       if (!name) continue;
 
       const priceStr = priceIdx < row.length ? row[priceIdx] : "0";
-      const price = parseFloat(priceStr.replace(/[^0-9.]/g, ""));
+      const parsedPrice = parseFloat(cleanNum(priceStr));
+      const price = isNaN(parsedPrice) || parsedPrice <= 0 ? 10 : parsedPrice;
 
       const sku = skuIdx !== -1 && skuIdx < row.length ? row[skuIdx] : undefined;
       const costStr = costIdx !== -1 && costIdx < row.length ? row[costIdx] : "";
-      const costPrice = costStr ? parseFloat(costStr.replace(/[^0-9.]/g, "")) : undefined;
+      const parsedCost = costStr ? parseFloat(cleanNum(costStr)) : undefined;
+      const costPrice = isNaN(parsedCost as number) ? undefined : parsedCost;
 
       const stockStr = stockIdx !== -1 && stockIdx < row.length ? row[stockIdx] : "10";
-      const stockQty = parseInt(stockStr.replace(/[^0-9]/g, ""), 10);
+      const stockQty = parseInt(cleanNum(stockStr), 10);
 
       const minStr = minIdx !== -1 && minIdx < row.length ? row[minIdx] : "5";
-      const minStock = parseInt(minStr.replace(/[^0-9]/g, ""), 10);
+      const minStock = parseInt(cleanNum(minStr), 10);
 
       const desc = descIdx !== -1 && descIdx < row.length ? row[descIdx] : undefined;
 
       items.push({
         name,
         sku: sku || undefined,
-        price: isNaN(price) || price <= 0 ? 10 : price,
-        cost_price: isNaN(costPrice as number) ? undefined : costPrice,
+        price,
+        cost_price: costPrice,
         stock_quantity: isNaN(stockQty) ? 10 : stockQty,
         min_stock: isNaN(minStock) ? 5 : minStock,
         description: desc || undefined,
@@ -198,7 +201,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
 
     if (fileName) setSelectedFileName(fileName);
     setParsedItems(items);
-    Alert.alert("CSV Parsed 📄", `Found ${items.length} products ready for import!`);
+    Alert.alert("CSV Parsed Successfully", `Found ${items.length} products ready for import!`);
   };
 
   // 3. Pick & Parse CSV File Safely with Multi-Fallback
@@ -246,7 +249,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
         console.warn("[BulkImport] FileSystem read failed, trying fetch fallback:", fsErr);
       }
 
-      // Strategy 2: Fallback to fetch (works reliably for content:// and file:// and blob:)
+      // Strategy 2: Fallback to fetch (works reliably for content://, file://, and blob:)
       if (!fileContent && file.uri) {
         try {
           const response = await fetch(file.uri);
@@ -284,6 +287,13 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
 
     bulkImportMutation.mutate(parsedItems, {
       onSuccess: (result) => {
+        if (result.imported_count === 0 && result.total_rows > 0) {
+          const errDetails = Array.isArray(result.errors) && result.errors.length > 0
+            ? result.errors.slice(0, 3).join("\n• ")
+            : "Database insertion failed.";
+          Alert.alert("Bulk Import Failed", `No products could be imported:\n• ${errDetails}`);
+          return;
+        }
         setImportResult(result);
         onSuccess?.();
       },
@@ -315,86 +325,98 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
               </View>
 
               <View style={{ flex: 1 }}>
-                <Text style={[styles.title, { color: colors.text }]}>Excel / CSV Bulk Import 📂</Text>
+                <Text style={[styles.title, { color: colors.text }]}>Excel / CSV Bulk Import 📊</Text>
                 <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-                  Add 500+ products to store catalog in 10 seconds
+                  Add 500+ products to store catalog in seconds
                 </Text>
               </View>
             </View>
 
-            <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <X size={20} color={colors.textMuted} />
+            <Pressable onPress={onClose} style={styles.closeBtn}>
+              <X size={18} color={colors.textMuted} />
             </Pressable>
           </View>
 
-          {/* Segmented Mode Switcher (Pick File vs Paste Text) */}
+          {/* Mode Switch Tabs */}
           <View style={[styles.tabRow, { backgroundColor: colors.background }]}>
             <Pressable
-              onPress={() => setActiveTab("file")}
               style={[
                 styles.tabBtn,
-                activeTab === "file" && { backgroundColor: colors.surface, elevation: 2 },
+                activeTab === "file" && {
+                  backgroundColor: colors.surface,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.05,
+                  shadowRadius: 3,
+                  elevation: 1,
+                },
               ]}
+              onPress={() => setActiveTab("file")}
             >
-              <Upload size={13} color={activeTab === "file" ? colors.primary : colors.textMuted} />
-              <Text style={[styles.tabText, { color: activeTab === "file" ? colors.text : colors.textMuted }]}>
-                Pick CSV File
+              <Upload size={14} color={activeTab === "file" ? colors.primary : colors.textMuted} />
+              <Text style={[styles.tabText, { color: activeTab === "file" ? colors.primary : colors.textMuted }]}>
+                Upload CSV File
               </Text>
             </Pressable>
 
             <Pressable
-              onPress={() => setActiveTab("paste")}
               style={[
                 styles.tabBtn,
-                activeTab === "paste" && { backgroundColor: colors.surface, elevation: 2 },
+                activeTab === "paste" && {
+                  backgroundColor: colors.surface,
+                  shadowColor: "#000",
+                  shadowOpacity: 0.05,
+                  shadowRadius: 3,
+                  elevation: 1,
+                },
               ]}
+              onPress={() => setActiveTab("paste")}
             >
-              <ClipboardList size={13} color={activeTab === "paste" ? colors.primary : colors.textMuted} />
-              <Text style={[styles.tabText, { color: activeTab === "paste" ? colors.text : colors.textMuted }]}>
-                Paste CSV Text 📋
+              <ClipboardList size={14} color={activeTab === "paste" ? colors.primary : colors.textMuted} />
+              <Text style={[styles.tabText, { color: activeTab === "paste" ? colors.primary : colors.textMuted }]}>
+                Paste CSV Text
               </Text>
             </Pressable>
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-            {/* Step 1: Download Template Instruction Card */}
+            {/* Template Download Prompt */}
             <View style={[styles.instructionBox, { backgroundColor: colors.background, borderColor: colors.surfaceBorder }]}>
               <View style={styles.stepHeader}>
                 <View style={styles.stepBadge}>
                   <Text style={styles.stepNumber}>1</Text>
                 </View>
-                <Text style={[styles.stepTitle, { color: colors.text }]}>Download Sample CSV Template</Text>
+                <Text style={[styles.stepTitle, { color: colors.text }]}>Download Sample Template</Text>
               </View>
 
               <Text style={[styles.stepSub, { color: colors.textMuted }]}>
-                Includes pre-formatted columns: Name, SKU, Price, Cost Price, Stock Quantity & Min Stock.
+                Standard format: Name, SKU, Price, CostPrice, StockQuantity, MinStock, Description
               </Text>
 
               <Button
-                title="Download CSV Template 📄"
+                title="Download Sample CSV 📄"
                 variant="outline"
                 size="sm"
                 onPress={handleDownloadTemplate}
                 leftIcon={<Download size={14} color={colors.primary} />}
-                style={{ marginTop: 6 }}
+                style={{ marginTop: 4 }}
               />
             </View>
 
-            {/* Step 2: Pick File or Paste Text */}
+            {/* Mode Tab 1: File Picker */}
             {activeTab === "file" ? (
               <View style={[styles.instructionBox, { backgroundColor: colors.background, borderColor: colors.surfaceBorder }]}>
                 <View style={styles.stepHeader}>
                   <View style={[styles.stepBadge, { backgroundColor: "#059669" }]}>
                     <Text style={styles.stepNumber}>2</Text>
                   </View>
-                  <Text style={[styles.stepTitle, { color: colors.text }]}>Select Product CSV File</Text>
+                  <Text style={[styles.stepTitle, { color: colors.text }]}>Select CSV File</Text>
                 </View>
 
                 {selectedFileName ? (
                   <View style={styles.selectedFileRow}>
                     <FileCheck size={16} color="#059669" />
                     <Text numberOfLines={1} style={[styles.fileNameText, { color: colors.text }]}>
-                      {selectedFileName} ({parsedItems.length} products)
+                      {selectedFileName}
                     </Text>
                   </View>
                 ) : (
@@ -472,7 +494,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
                 </View>
 
                 <Button
-                  title={`Import All ${parsedItems.length} Products Now ✨`}
+                  title={`Import All ${parsedItems.length} Products Now 🚀`}
                   variant="primary"
                   size="md"
                   isLoading={bulkImportMutation.isPending}
@@ -510,7 +532,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
                 )}
 
                 <Button
-                  title="Done & Refresh Catalog ✨"
+                  title="Done & Refresh Catalog 🚀"
                   variant="primary"
                   size="sm"
                   onPress={handleCloseAndRefresh}
