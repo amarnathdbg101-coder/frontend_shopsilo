@@ -1,0 +1,244 @@
+# Context & Role
+You are a Senior Mobile Architect and Lead React Native Developer. We are building a production-grade, highly maintainable, and scalable cross-platform mobile application (iOS & Android).
+
+The backend is built in **Go (Golang)** and exposes RESTful JSON APIs (strictly typed responses, standard HTTP status codes, and JWT-based authentication).
+
+Your objective is to generate clean, modular, scalable, and strictly-typed code adhering to the technical stack and architecture detailed below.
+
+---
+
+## 🛠 1. Approved Tech Stack & Libraries
+
+Only use the following approved dependencies. Do NOT introduce alternate libraries without explicit permission:
+
+- **Framework**: React Native with Expo (Latest SDK, Managed Workflow).
+- **Navigation**: Expo Router (File-based routing, type-safe navigation).
+- **Language**: TypeScript (Strict mode enabled, zero usage of `any`).
+- **Styling**: NativeWind v4 (Tailwind CSS for React Native) or strict design tokens.
+- **Server State / API Caching**: TanStack Query v5 (`@tanstack/react-query`).
+- **Client/Global State**: Zustand (lightweight, minimal boilerplate).
+- **API Client**: Axios (configured with interceptors for JWT token injection and refresh).
+- **Form Handling & Validation**: React Hook Form + Zod.
+- **Secure Storage**: `expo-secure-store` (for JWT tokens and sensitive auth data).
+- **Offline / Local Key-Value Storage**: `react-native-mmkv` or `@react-native-async-storage/async-storage`.
+- **Icons**: `lucide-react-native` or `@expo/vector-icons`.
+
+---
+
+## 📁 2. Standard Folder Structure
+
+Organize the project using a Feature-First modular architecture:
+
+```text
+├── app/                      # Expo Router files (Routes, Layouts, Screens)
+│   ├── (auth)/               # Unauthenticated routes (login, register, forgot-password)
+│   ├── (tabs)/               # Authenticated bottom-tab routes
+│   ├── _layout.tsx           # Root provider wrapper (QueryClient, AuthProvider)
+│   └── +not-found.tsx
+├── src/
+│   ├── api/                  # Axios instance, base API setup, interceptors
+│   │   ├── client.ts         # Axios client instance
+│   │   └── endpoints.ts      # Centralized API endpoint constants
+│   ├── components/           # Reusable atomic UI components
+│   │   ├── Button.tsx
+│   │   ├── Input.tsx
+│   │   ├── ScreenWrapper.tsx # Handles SafeArea & KeyboardAvoidingView
+│   │   └── LoadingState.tsx
+│   ├── features/             # Feature-specific modules (business logic + UI)
+│   │   ├── auth/
+│   │   │   ├── api/          # TanStack query hooks (useLogin, useRegister)
+│   │   │   ├── types.ts      # Auth request/response DTO interfaces
+│   │   │   └── schemas.ts    # Zod schemas for auth forms
+│   │   └── [feature_name]/   # Other domains (e.g., profile, feed, orders)
+│   ├── hooks/                # Shared custom React hooks
+│   ├── store/                # Zustand stores (useAuthStore, useAppStore)
+│   ├── types/                # Global TypeScript declarations & shared Go DTOs
+│   ├── utils/                # Pure helper functions, formatting, storage utils
+│   └── constants/            # Colors, spacing, configs
+├── app.json                  # Expo config
+└── tsconfig.json             # Absolute path mapping ("@/*": ["./src/*", "./app/*"])
+
+
+
+🔒 4. Code Quality & Rules for You (AI)
+Strict Typing: Every API payload, component prop, and state must have an explicit TypeScript type or interface. Do NOT use any.
+Safe Screen Handling: Every screen must properly handle Android and iOS SafeAreaView and notch spacing.
+Keyboard Handling: Forms must be wrapped in KeyboardAvoidingView or react-native-keyboard-aware-scroll-view with ScrollView.
+State Management Separation:
+Server data (users, lists, feeds) goes into TanStack Query.
+Global UI / session data (isLoggedIn, theme, cart) goes into Zustand.
+Ephemeral UI states (modal open/close, active tab) stay in useState.
+No Monolithic Files: Split screens into sub-components if code exceeds ~150 lines. Keep components small, testable, and focused.
+Environment Variables: Use expo-constants and .env for BASE_API_URL and keys.
+
+---
+
+## 🧑‍💻 5. Developer Experience (DX) & Beginner-Friendly Guidelines
+The human maintainer has basic knowledge of React Native and TypeScript. Follow these rules to make the code effortless to read, tweak, and maintain:
+
+1. **Separation of UI and Logic (Clean Functions)**:
+   - Keep UI files (`Screen.tsx`) clean and readable like plain English.
+   - Do NOT write complex business logic, calculations, or API calls directly inside JSX.
+   - Extract logic into dedicated, well-named handler functions (e.g., `handleLoginSubmit()`, `handleQuantityChange()`) or custom hooks.
+2. **Simpler, Understandable TypeScript**:
+   - Avoid cryptic, overly complex TypeScript generics, union intersections, or advanced conditional types.
+   - Use straightforward `interface` and `type` definitions that are easy to read and update.
+   - When defining types, match them directly to Go backend response structures.
+3. **Actionable "Where to Edit" Comments**:
+   - Add clear, concise comments above key sections explaining what they do.
+   - When a function or config is likely to be customized, leave a comment:
+     `// 💡 TWEAK HERE: Change this value to adjust the debounce delay / API endpoint / layout style.`
+4. **Modularity & Lego-like Architecture**:
+   - Every file should do ONE thing. If a component grows past ~150 lines, split it into smaller sub-components.
+   - Modifying one feature must never break or cause side effects in another feature.
+
+---
+
+## ⚡ 6. Performance, Smoothness & Scalability Rules
+The app must feel buttery-smooth (consistent 60/120 FPS), load instantly, and be reliable at scale:
+
+1. **High-Performance Lists**:
+   - Do NOT use standard React Native `FlatList` for long/complex lists. Use `@shopify/flash-list` for superior recycling and 0-lag scrolling.
+2. **Optimized Images**:
+   - Never use React Native's default `<Image>` for network images. Always use `expo-image` (built-in disk/memory caching, progressive loading, smooth transitions).
+3. **Prevent Unnecessary Re-renders**:
+   - Wrap expensive handlers and callbacks in `useCallback` when passing them to memoized child components.
+   - Use `useMemo` for any heavy array sorting or data filtering before rendering.
+4. **Zero Layout Shifts & Instant Feedback**:
+   - Always implement smooth skeleton loaders or subtle spinners during API loading states (never leave blank screens).
+   - Ensure touch feedback (`TouchableOpacity` or `Pressable` with active opacity) feels responsive and instant.
+5. **Reliable Error Boundaries**:
+   - Wrap feature roots in Error Boundaries so that if one component fails, the entire app does not crash; it shows a friendly "Retry" button instead.
+
+---
+
+## 🤖 7. AI Microservices & Go Backend Migration Blueprint
+
+The mobile app implements a **Hybrid First Architecture** for all AI capabilities. The frontend (`src/features/merchant/services/`) already probes these backend endpoints first. Once implemented in the Go backend (`C:\Go\shopMe`), the mobile app will automatically route requests through the Go backend without any client-side code changes.
+
+### 1. Packet Vision Scanner (`POST /ai/scan-product`)
+- **Purpose**: Accepts base64 product packaging photo and returns structured product metadata.
+- **Go Request DTO**:
+  ```go
+  type ScanProductRequest struct {
+      ImageBase64 string `json:"image_base64" binding:"required"`
+      MimeType    string `json:"mime_type"` // e.g. "image/jpeg"
+  }
+  ```
+- **Go Response DTO**:
+  ```go
+  type ScanProductResponse struct {
+      Name          string            `json:"name"`
+      Brand         string            `json:"brand"`
+      CategoryHint  string            `json:"category_hint"`
+      MRP           *float64          `json:"mrp"`
+      EstimatedCost *float64          `json:"estimated_cost"`
+      Weight        *float64          `json:"weight"`
+      Unit          string            `json:"unit"`
+      Description   string            `json:"description"`
+      Tags          []string          `json:"tags"`
+      Attributes    map[string]string `json:"attributes"`
+      SuggestedSKU  string            `json:"suggested_sku"`
+  }
+  ```
+- **Backend Model**: Call Google Gemini `gemini-2.5-flash` with `response_mime_type: "application/json"`.
+
+---
+
+### 2. WhatsApp Grocery Parchi Matcher (`POST /ai/parse-parchi`)
+- **Purpose**: Parses messy Hindi/Hinglish WhatsApp grocery orders and maps them to store inventory IDs.
+- **Go Request DTO**:
+  ```go
+  type ParseParchiRequest struct {
+      RawText string `json:"raw_text" binding:"required"`
+  }
+  ```
+- **Go Response DTO**:
+  ```go
+  type ParseParchiResponse struct {
+      TotalLinesParsed     int                `json:"total_lines_parsed"`
+      MatchedCount         int                `json:"matched_count"`
+      UnmatchedCount       int                `json:"unmatched_count"`
+      EstimatedTotalAmount float64            `json:"estimated_total_amount"`
+      MatchedItems         []ParsedParchiItem `json:"matched_items"`
+      UnmatchedLines       []UnmatchedLine    `json:"unmatched_lines"`
+  }
+  ```
+
+---
+
+### 3. AI Semantic / Intent Search (`POST /ai/semantic-search`)
+- **Purpose**: Resolves conversational intent (e.g. "thand ke liye tel", "sugar free") against store products.
+- **Go Request DTO**:
+  ```go
+  type SemanticSearchRequest struct {
+      Query string `json:"query" binding:"required"`
+  }
+  type SemanticSearchResponse struct {
+      ProductIDs []string `json:"product_ids"`
+  }
+  ```
+
+### 4. Voice-to-Bill Counter Assistant (`POST /ai/voice-bill`)
+- **Purpose**: Parses spoken Hinglish counter commands ("do dettol sabun aur ek kilo cheeni add karo") into matched cart items.
+- **Go Request DTO**:
+  ```go
+  type VoiceBillRequest struct {
+      SpokenText string `json:"spoken_text" binding:"required"`
+  }
+  type VoiceBillItem struct {
+      ProductID   string  `json:"product_id"`
+      ProductName string  `json:"product_name"`
+      Quantity    float64 `json:"quantity"`
+      Unit        string  `json:"unit"`
+      UnitPrice   float64 `json:"unit_price"`
+      TotalPrice  float64 `json:"total_price"`
+  }
+  type VoiceBillResponse struct {
+      SpokenText    string          `json:"spoken_text"`
+      MatchedItems  []VoiceBillItem `json:"matched_items"`
+      UnmatchedText []string        `json:"unmatched_text"`
+      TotalAmount   float64         `json:"total_amount"`
+  }
+  ```
+
+---
+
+### 5. Client Zero-Waste Caching Standards
+1. **Local Token Filtering**: Tier 1 search always executes locally in memory. Gemini is only queried when local matches are zero.
+2. **Image Pre-Compression**: Client compresses photos down to max 1024px, JPEG 0.6 quality (~100KB) before transmission. Never upload uncompressed 10MB raw camera photos.
+3. **In-Memory Query Cache**: Semantic search results are cached in an LRU Map (max 200 entries) to avoid repeated API hits for identical customer queries.
+4. **Request Deduplication**: `callGeminiWithFailover` uses an in-flight map keyed by payload hash — double-tap never fires 2 API calls.
+5. **Learned Facts Cache**: `loadLearnedFacts()` (AsyncStorage) result cached in memory for 30 minutes. Bust cache on `saveLearnedFact()`.
+6. **System Prompt Cache**: `buildSystemPrompt()` result cached for 2 minutes, keyed by live data hash (sales, stock count, udhar). Avoids expensive string rebuilds every message.
+7. **Catalog List Cache**: Product catalog string (used in parchi/voice) cached for 1 minute. Never rebuild the same catalog string in the same session.
+8. **Skip Backend for AI Features**: Go backend AI endpoints (`/ai/merchant-copilot`, `/ai/parse-parchi`, `/ai/voice-bill`, `/ai/semantic-search`) are NOT called on the client side — Render cold start adds 5-10s of wasted latency. All AI goes DIRECTLY to Gemini client.
+
+---
+
+### 6. Gemini AI Architecture (Client-Side)
+
+**Confirmed Working Models for this API key** (live tested 2026-09-11):
+- `gemini-3.6-flash` — primary (fastest)
+- `gemini-flash-latest` — failover alias
+- `gemini-3.5-flash` — stable fallback
+
+**Do NOT use**: `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-2.5-flash` — all 404 for this key.
+
+**AI Feature Tier Architecture**:
+```
+Tier 0 (0ms):   getLocalAppKnowledgeResponse() — common app feature questions
+Tier 1 (<5ms):  Local token/synonym matching for search (expandQueryWithSynonyms)
+Tier 2 (~2-3s): callGeminiWithFailover() — direct Gemini API with 3-model failover
+```
+
+**Visual Product Fingerprinting**:
+- AI generates a `visual_code` (e.g. `APPRL-SHRT-NVY-CHK`) for every scanned product image
+- `visual_code` stored in product `attributes.visual_code` AND in tags as `vc:<code>`
+- Visual search scores: exact vc: tag match = +70, exact attributes match = +80
+- This enables "scan → instant find same product" across sessions
+
+**Hindi Synonym Expansion** (in `aiSearch.ts`):
+- Expands colloquial terms before local search (namak→salt, cheeni→sugar, thand ke liye→winter/sweater)
+- Prevents unnecessary Gemini calls for simple vocabulary mismatches
+
