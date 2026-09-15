@@ -8,6 +8,7 @@ import {
   Pressable,
   Modal,
   Alert,
+  ScrollView,
 } from "react-native";
 import { ScreenWrapper } from "@/components/ScreenWrapper";
 import { Button } from "@/components/Button";
@@ -18,9 +19,13 @@ import { KhataAgingCard } from "@/features/merchant/components/KhataAgingCard";
 import { KhataCustomerCard } from "@/features/merchant/components/KhataCustomerCard";
 import { KhataPannaView } from "@/features/merchant/components/KhataPannaView";
 import { KhataCustomerQRScannerModal } from "@/features/merchant/components/KhataCustomerQRScannerModal";
+import { ExpressQuickUdharModal } from "@/features/merchant/components/ExpressQuickUdharModal";
 import { useMyShop } from "@/features/merchant/api/useMerchantStore";
 import { KhataCustomer } from "@/features/merchant/types";
 import { formatCurrency } from "@/utils/format";
+import { apiClient } from "@/api/client";
+import { Endpoints } from "@/api/endpoints";
+import { playSoundboxTone } from "@/utils/soundbox";
 import {
   Plus,
   Search,
@@ -28,10 +33,12 @@ import {
   BookOpen,
   UserPlus,
   QrCode,
-  Calendar,
-  AlertTriangle,
-  Users,
-  Filter,
+  Zap,
+  RotateCcw,
+  CheckCircle2,
+  Clock,
+  ArrowDownLeft,
+  ArrowUpRight,
 } from "lucide-react-native";
 
 type FilterTab = "ALL" | "DUE_TODAY" | "HIGH_DUE" | "DISPUTED";
@@ -52,6 +59,19 @@ export default function MerchantKhataScreen() {
 
   const [pannaVisible, setPannaVisible] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<KhataCustomer | null>(null);
+
+  // Express Quick Entry Modal state
+  const [quickEntryVisible, setQuickEntryVisible] = useState(false);
+  const [quickCustomer, setQuickCustomer] = useState<KhataCustomer | null>(null);
+
+  // 5-Second Floating Undo Banner State
+  const [undoToast, setUndoToast] = useState<{
+    visible: boolean;
+    customer: KhataCustomer;
+    amount: number;
+    type: "CREDIT" | "PAYMENT";
+    timer?: any;
+  } | null>(null);
 
   // New Customer Modal
   const [scannerVisible, setScannerVisible] = useState(false);
@@ -98,9 +118,29 @@ export default function MerchantKhataScreen() {
     }).length;
   }, [customers]);
 
+  // Instant search matches (top 4)
+  const searchMatches = useMemo(() => {
+    if (!search.trim() || !customers) return [];
+    const q = search.trim().toLowerCase();
+    return customers
+      .filter((c) => c.customer_name.toLowerCase().includes(q) || c.customer_mobile.includes(q))
+      .slice(0, 4);
+  }, [search, customers]);
+
+  // Recent 6 Customers for 1-tap quick bar
+  const recentCustomers = useMemo(() => {
+    if (!customers) return [];
+    return customers.slice(0, 6);
+  }, [customers]);
+
   const handleOpenPanna = (customer: KhataCustomer) => {
     setSelectedCustomer(customer);
     setPannaVisible(true);
+  };
+
+  const handleOpenQuickEntry = (customer: KhataCustomer) => {
+    setQuickCustomer(customer);
+    setQuickEntryVisible(true);
   };
 
   const handleCustomerScanned = (scanned: { phone: string; name?: string }) => {
@@ -111,7 +151,7 @@ export default function MerchantKhataScreen() {
     });
 
     if (existing) {
-      handleOpenPanna(existing);
+      handleOpenQuickEntry(existing);
     } else {
       const newCust: KhataCustomer = {
         id: "",
@@ -124,6 +164,63 @@ export default function MerchantKhataScreen() {
       };
       setSelectedCustomer(newCust);
       setPannaVisible(true);
+    }
+  };
+
+  const handleQuickSuccess = (result: {
+    customer: KhataCustomer;
+    amount: number;
+    type: "CREDIT" | "PAYMENT";
+    notes: string;
+  }) => {
+    refetchCustomers();
+    refetchAging();
+
+    // Trigger 5-second Floating Undo Toast
+    if (undoToast?.timer) clearTimeout(undoToast.timer);
+    const timer = setTimeout(() => {
+      setUndoToast(null);
+    }, 6000);
+
+    setUndoToast({
+      visible: true,
+      customer: result.customer,
+      amount: result.amount,
+      type: result.type,
+      timer,
+    });
+  };
+
+  // Undo recent typo action
+  const handlePerformUndo = async () => {
+    if (!undoToast) return;
+    const { customer, amount, type } = undoToast;
+    setUndoToast(null);
+
+    try {
+      if (type === "CREDIT") {
+        // Reverse credit by adding matching payment entry
+        await apiClient.post(Endpoints.MERCHANT.KHATA_PAYMENT(customer.customer_mobile), {
+          customer_name: customer.customer_name,
+          amount: amount,
+          payment_mode: "reversal",
+          notes: "Auto-Undo typo mistake",
+        });
+      } else {
+        // Reverse payment by re-adding credit
+        await apiClient.post(Endpoints.MERCHANT.KHATA, {
+          customer_name: customer.customer_name,
+          customer_mobile: customer.customer_mobile,
+          amount: amount,
+          notes: "Auto-Undo payment typo",
+        });
+      }
+      playSoundboxTone("reversal");
+      Alert.alert("Undo Done", "Galti sudhar di gayi hai aur balance restore ho gaya hai.");
+      refetchCustomers();
+      refetchAging();
+    } catch {
+      Alert.alert("Error", "Undo nahi ho paya. Kripya passbook me jakar galti sudharein.");
     }
   };
 
@@ -165,7 +262,7 @@ export default function MerchantKhataScreen() {
           <Search size={16} color={colors.textMuted} />
           <TextInput
             style={[styles.input, { color: colors.text }]}
-            placeholder="Search customer name or phone..."
+            placeholder="Search customer by name or phone..."
             placeholderTextColor={colors.textMuted}
             value={search}
             onChangeText={setSearch}
@@ -199,6 +296,75 @@ export default function MerchantKhataScreen() {
           onPress={() => setNewCustomerModalVisible(true)}
         />
       </View>
+
+      {/* Instant Search Suggestions Box (If typing) */}
+      {searchMatches.length > 0 && search.trim().length > 0 && (
+        <View style={[styles.searchDropdown, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+          <Text style={[styles.dropdownLabel, { color: colors.textMuted }]}>
+            ⚡ Instant Matches (Tap for Quick Udhar):
+          </Text>
+          {searchMatches.map((match) => (
+            <Pressable
+              key={match.id || match.customer_mobile}
+              onPress={() => {
+                setSearch("");
+                handleOpenQuickEntry(match);
+              }}
+              style={styles.dropdownItem}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.matchName, { color: colors.text }]}>{match.customer_name}</Text>
+                <Text style={[styles.matchPhone, { color: colors.textMuted }]}>📞 {match.customer_mobile}</Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={[styles.matchBal, { color: match.current_balance > 0 ? "#dc2626" : "#16a34a" }]}>
+                  {formatCurrency(match.current_balance)}
+                </Text>
+                <View style={styles.quickEntryBadge}>
+                  <Zap size={10} color="#fff" />
+                  <Text style={styles.quickEntryBadgeText}>Quick Entry</Text>
+                </View>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Recent / Frequent Customers 1-Tap Bar */}
+      {recentCustomers.length > 0 && !search && (
+        <View style={styles.recentWrap}>
+          <Text style={[styles.recentLabel, { color: colors.textMuted }]}>⚡ Quick Pick Customer:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentScroll}>
+            {recentCustomers.map((cust) => (
+              <Pressable
+                key={cust.id || cust.customer_mobile}
+                onPress={() => handleOpenQuickEntry(cust)}
+                style={[
+                  styles.recentChip,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: cust.current_balance > 0 ? (isDark ? "#451a1a" : "#fecaca") : colors.surfaceBorder,
+                  },
+                ]}
+              >
+                <View style={styles.recentAvatar}>
+                  <Text style={styles.recentAvatarText}>
+                    {cust.customer_name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={[styles.recentName, { color: colors.text }]} numberOfLines={1}>
+                    {cust.customer_name}
+                  </Text>
+                  <Text style={[styles.recentBal, { color: cust.current_balance > 0 ? "#dc2626" : "#16a34a" }]}>
+                    {formatCurrency(cust.current_balance)}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       {/* Filter Tabs */}
       <View style={styles.tabsRow}>
@@ -255,7 +421,7 @@ export default function MerchantKhataScreen() {
           renderItem={({ item }) => (
             <KhataCustomerCard
               customer={item}
-              onRecordPayment={handleOpenPanna}
+              onRecordPayment={handleOpenQuickEntry}
               onPressCard={handleOpenPanna}
             />
           )}
@@ -280,6 +446,44 @@ export default function MerchantKhataScreen() {
           refreshing={loadingCustomers}
         />
       )}
+
+      {/* 5-Second Floating Undo Banner (Typo Protection Loophole Fix) */}
+      {!!undoToast && undoToast.visible && (
+        <View style={styles.undoFloatingBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.undoTitle}>
+              {undoToast.type === "CREDIT" ? "Udhar Darj Hua" : "Jama Darj Hua"} ✅
+            </Text>
+            <Text style={styles.undoSub} numberOfLines={1}>
+              {undoToast.customer.customer_name}: {formatCurrency(undoToast.amount)}
+            </Text>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={handlePerformUndo}
+            style={styles.undoBtn}
+          >
+            <RotateCcw size={14} color="#f59e0b" />
+            <Text style={styles.undoBtnText}>UNDO</Text>
+          </Pressable>
+
+          <Pressable onPress={() => setUndoToast(null)} style={{ padding: 4 }}>
+            <X size={16} color="#94a3b8" />
+          </Pressable>
+        </View>
+      )}
+
+      {/* ⚡ Express Quick Udhar Modal */}
+      <ExpressQuickUdharModal
+        visible={quickEntryVisible}
+        customer={quickCustomer}
+        onClose={() => {
+          setQuickEntryVisible(false);
+          setQuickCustomer(null);
+        }}
+        onSuccess={handleQuickSuccess}
+      />
 
       {/* QR Scanner */}
       <KhataCustomerQRScannerModal
@@ -366,7 +570,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 8,
+    paddingBottom: 6,
     gap: 8,
   },
   searchBox: {
@@ -392,10 +596,100 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  searchDropdown: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 8,
+    gap: 6,
+  },
+  dropdownLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 6,
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(0,0,0,0.02)",
+  },
+  matchName: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  matchPhone: {
+    fontSize: 11,
+  },
+  matchBal: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  quickEntryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#f59e0b",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 2,
+  },
+  quickEntryBadgeText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  recentWrap: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  recentLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  recentScroll: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  recentChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  recentAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(37,99,235,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recentAvatarText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#2563eb",
+  },
+  recentName: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  recentBal: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
   tabsRow: {
     flexDirection: "row",
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingVertical: 8,
     gap: 8,
   },
   tabBtn: {
@@ -426,6 +720,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "center",
     lineHeight: 18,
+  },
+  undoFloatingBanner: {
+    position: "absolute",
+    bottom: 24,
+    left: 16,
+    right: 16,
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  undoTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  undoSub: {
+    fontSize: 11,
+    color: "#94a3b8",
+  },
+  undoBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(245,158,11,0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#f59e0b",
+  },
+  undoBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#f59e0b",
   },
   modalBackdrop: {
     flex: 1,
