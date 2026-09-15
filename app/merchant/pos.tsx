@@ -33,7 +33,8 @@ import { apiClient } from "@/api/client";
 import { VoiceBillItem } from "@/features/merchant/services/aiVoicePOS";
 import { useMerchantProducts } from "@/features/merchant/api/usePOS";
 import { POSCustomerInput } from "@/features/merchant/components/POSCustomerInput";
-import { FileText, Mic, Camera, ReceiptText, Trash2, QrCode, BookOpen } from "lucide-react-native";
+import { KhataCustomerPickerModal } from "@/features/merchant/components/KhataCustomerPickerModal";
+import { FileText, Mic, Camera, ReceiptText, Trash2, QrCode, BookOpen, UserCheck, User } from "lucide-react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { enqueueOfflineAction } from "@/utils/offlineSyncQueue";
 import { Endpoints } from "@/api/endpoints";
@@ -52,6 +53,7 @@ function POSContent() {
   const [voiceVisible, setVoiceVisible] = useState(false);
   const [visualVisible, setVisualVisible] = useState(false);
   const [khataScannerVisible, setKhataScannerVisible] = useState(false);
+  const [khataPickerVisible, setKhataPickerVisible] = useState(false);
   const [customerTrustInfo, setCustomerTrustInfo] = useState<{
     score: number;
     badge: string;
@@ -285,46 +287,92 @@ function POSContent() {
                   Khata / Udhar Billing
                 </Text>
               </View>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setKhataScannerVisible(true)}
-                style={[
-                  styles.khataScanBtn,
-                  { backgroundColor: colors.surface, borderColor: colors.surfaceBorder },
-                ]}
-              >
-                <QrCode size={14} color={colors.primary} />
-                <Text style={[styles.khataScanBtnText, { color: colors.primary }]}>
-                  Scan Customer QR
-                </Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setKhataPickerVisible(true)}
+                  style={[
+                    styles.khataScanBtn,
+                    { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                >
+                  <UserCheck size={13} color="#ffffff" />
+                  <Text style={[styles.khataScanBtnText, { color: "#ffffff" }]}>
+                    Grahak Chunein
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setKhataScannerVisible(true)}
+                  style={[
+                    styles.khataScanBtn,
+                    { backgroundColor: colors.surface, borderColor: colors.surfaceBorder },
+                  ]}
+                >
+                  <QrCode size={13} color={colors.primary} />
+                  <Text style={[styles.khataScanBtnText, { color: colors.primary }]}>
+                    QR
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
-            {customerTrustInfo ? (
-              <View style={styles.trustInfoRow}>
-                <TrustScoreBadge
-                  score={customerTrustInfo.score}
-                  badge={customerTrustInfo.badge}
-                  size="sm"
-                />
-                <Text style={[styles.trustBalanceText, { color: colors.textMuted }]}>
-                  Baki: ₹{customerTrustInfo.current_balance.toLocaleString("en-IN")}
-                  {customerTrustInfo.credit_limit > 0
-                    ? ` (Limit: ₹${customerTrustInfo.credit_limit.toLocaleString("en-IN")})`
-                    : ""}
-                </Text>
+            {customerName || customerPhone ? (
+              <View style={[styles.selectedCustCard, { backgroundColor: isDark ? "#0f172a" : "#eff6ff", borderColor: "#bfdbfe" }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <View style={[styles.custAvatar, { backgroundColor: colors.primary }]}>
+                      <Text style={styles.custAvatarText}>{(customerName || "G")[0].toUpperCase()}</Text>
+                    </View>
+                    <View>
+                      <Text style={[styles.selectedCustName, { color: colors.text }]}>{customerName || "Khata Grahak"}</Text>
+                      <Text style={[styles.selectedCustPhone, { color: colors.textMuted }]}>{customerPhone}</Text>
+                    </View>
+                  </View>
+                  <Pressable accessibilityRole="button" onPress={() => setKhataPickerVisible(true)} style={styles.changeCustBtn}>
+                    <Text style={[styles.changeCustText, { color: colors.primary }]}>Badlein</Text>
+                  </Pressable>
+                </View>
+
+                {customerTrustInfo && (
+                  <View style={styles.trustInfoRow}>
+                    <TrustScoreBadge
+                      score={customerTrustInfo.score}
+                      badge={customerTrustInfo.badge}
+                      size="sm"
+                    />
+                    <Text style={[styles.trustBalanceText, { color: colors.textMuted }]}>
+                      Puraana: <Text style={{ color: "#dc2626", fontWeight: "800" }}>₹{customerTrustInfo.current_balance.toLocaleString("en-IN")}</Text>
+                      {" • "}
+                      Naya: <Text style={{ color: colors.primary, fontWeight: "800" }}>₹{(customerTrustInfo.current_balance + total).toLocaleString("en-IN")}</Text>
+                    </Text>
+                  </View>
+                )}
               </View>
             ) : (
-              <Text style={[styles.khataHintText, { color: colors.textMuted }]}>
-                Customer ka phone number bharein ya QR scan karein. Bill seedhe unke khate me jud jayega.
-              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setKhataPickerVisible(true)}
+                style={[styles.emptyCustPrompt, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}
+              >
+                <UserCheck size={18} color={colors.primary} />
+                <Text style={[styles.emptyCustPromptText, { color: colors.primary }]}>
+                  👉 Yahan tap karke Khata se Grahak Chunein ya Search karein
+                </Text>
+              </Pressable>
             )}
           </View>
         )}
 
         <POSPaymentSelector
           method={paymentMethod}
-          onSelectMethod={setPaymentMethod}
+          onSelectMethod={(m) => {
+            setPaymentMethod(m);
+            if (m === "credit" && !customerPhone) {
+              setKhataPickerVisible(true);
+            }
+          }}
           splitCash={splitCash}
           setSplitCash={setSplitCash}
           splitUPI={splitUPI}
@@ -370,6 +418,22 @@ function POSContent() {
         onClose={() => setVoiceVisible(false)}
         inventory={inventory}
         onAddItems={handleImportVoiceItems}
+      />
+
+      <KhataCustomerPickerModal
+        visible={khataPickerVisible}
+        onClose={() => setKhataPickerVisible(false)}
+        onSelectCustomer={(cust) => {
+          setCustomerPhone(cust.phone);
+          setCustomerName(cust.name);
+          setCustomerTrustInfo({
+            score: cust.trust_score || 85,
+            badge: cust.trust_badge || "Silver",
+            credit_limit: cust.credit_limit || 0,
+            current_balance: cust.current_balance || 0,
+          });
+        }}
+        currentTotal={total}
       />
 
       <KhataCustomerQRScannerModal
@@ -466,6 +530,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    marginTop: 6,
   },
   trustBalanceText: {
     fontSize: 11,
@@ -473,6 +538,55 @@ const styles = StyleSheet.create({
   },
   khataHintText: {
     fontSize: 11,
+  },
+  selectedCustCard: {
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 6,
+  },
+  custAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  custAvatarText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  selectedCustName: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  selectedCustPhone: {
+    fontSize: 11,
+  },
+  changeCustBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: "rgba(99, 102, 241, 0.12)",
+  },
+  changeCustText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  emptyCustPrompt: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: "dashed",
+  },
+  emptyCustPromptText: {
+    fontSize: 12,
+    fontWeight: "700",
+    flex: 1,
   },
   checkoutBar: { flexDirection: "row", alignItems: "center", gap: 12, borderTopWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingTop: 10, paddingBottom: 8, marginBottom: Platform.OS === "ios" ? 76 : 72, shadowColor: "#0f172a", shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 6, zIndex: 5 },
   totalBlock: { minWidth: 92 },
