@@ -62,6 +62,7 @@ export const Endpoints = {
     KHATA_RESOLVE_DISPUTE: (id: string, txId: string) => `/shops/me/khata/${id}/dispute/${txId}/resolve`,
     KHATA_PROMISE_DATE: (id: string) => `/shops/me/khata/${id}/promise-date`,
     KHATA_TRUST_SCORE: (mobile: string) => `/shops/me/khata/${mobile}/trust-score`,
+    KHATA_CREDIT_LIMIT: (mobile: string) => `/shops/me/khata/${mobile}/credit-limit`,
     LOW_STOCK: "/shops/me/inventory/low-stock",
     ADJUST_STOCK: "/shops/me/inventory/adjust",
     REORDER_SHEET: "/shops/me/inventory/reorder-sheet.pdf",

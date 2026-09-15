@@ -12,6 +12,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from "react-native";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { formatCurrency } from "@/utils/format";
@@ -47,12 +48,15 @@ import {
   Clock,
   Paperclip,
   Eye,
+  QrCode,
+  Sliders,
 } from "lucide-react-native";
 
 interface KhataPannaViewProps {
   visible: boolean;
   customer: KhataCustomer | null;
   shopName?: string;
+  shopUpiId?: string;
   onClose: () => void;
   onRefreshList?: () => void;
 }
@@ -61,6 +65,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
   visible,
   customer,
   shopName = "Hamari Dukan",
+  shopUpiId = "merchant@upi",
   onClose,
   onRefreshList,
 }) => {
@@ -69,7 +74,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
   const [history, setHistory] = useState<CustomerKhataHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Quick entry inputs (जैसे कॉपी पे लिखते हैं)
+  // Quick entry inputs (Udhar Diya / Jama Liya)
   const [entryAmount, setEntryAmount] = useState("");
   const [entryNotes, setEntryNotes] = useState("");
   const [entryBillNo, setEntryBillNo] = useState("");
@@ -101,6 +106,15 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
   const [parchiViewerVisible, setParchiViewerVisible] = useState(false);
   const [viewingParchiTx, setViewingParchiTx] = useState<any | null>(null);
   const [ptpModalVisible, setPtpModalVisible] = useState(false);
+
+  // Live Counter UPI QR Modal
+  const [counterQrVisible, setCounterQrVisible] = useState(false);
+  const [qrAmount, setQrAmount] = useState("");
+
+  // Credit Limit Edit Modal
+  const [creditLimitModalVisible, setCreditLimitModalVisible] = useState(false);
+  const [newCreditLimitInput, setNewCreditLimitInput] = useState("");
+  const [isSavingCreditLimit, setIsSavingCreditLimit] = useState(false);
 
   const fetchHistory = async () => {
     if (!customer?.customer_mobile) return;
@@ -143,6 +157,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
   if (!visible || !customer) return null;
 
   const currentBal = history?.current_balance ?? customer.current_balance;
+  const activeCreditLimit = customer.credit_limit || (history as any)?.customer?.credit_limit || 0;
 
   // 1. Direct Add Credit (Udhar Diya +)
   const handleSnapParchi = async () => {
@@ -177,13 +192,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
     onRefreshList?.();
   };
 
-  const handleGiveCredit = async () => {
-    const amt = parseFloat(entryAmount);
-    if (!amt || amt <= 0) {
-      Alert.alert("Amount Required", "Kripya sahi rakam (amount ₹) enter karein.");
-      return;
-    }
-
+  const performGiveCredit = async (amt: number) => {
     setIsSubmitting(true);
     try {
       await apiClient.post(Endpoints.MERCHANT.KHATA, {
@@ -199,6 +208,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
       setEntryAmount("");
       setEntryNotes("");
       setEntryBillNo("");
+      setParchiPhotoUri(null);
       await fetchHistory();
       onRefreshList?.();
     } catch (err: any) {
@@ -206,6 +216,33 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleGiveCredit = async () => {
+    const amt = parseFloat(entryAmount);
+    if (!amt || amt <= 0) {
+      Alert.alert("Amount Required", "Kripya sahi rakam (amount > ₹0) enter karein.");
+      return;
+    }
+
+    // Over-limit protection safety check
+    if (activeCreditLimit > 0 && currentBal + amt > activeCreditLimit) {
+      Alert.alert(
+        "⚠️ Credit Limit Exceeded",
+        `Customer ki Seema ${formatCurrency(activeCreditLimit)} hai. Naya udhar milakar kul baaki ${formatCurrency(currentBal + amt)} ho jayega.\n\nKya aap phir bhi udhar dena chahte hain?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Haan, Udhar Dein",
+            style: "destructive",
+            onPress: () => performGiveCredit(amt),
+          },
+        ]
+      );
+      return;
+    }
+
+    await performGiveCredit(amt);
   };
 
   // 2. Direct Add Payment (Jama Liya -)
@@ -228,6 +265,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
       setEntryAmount("");
       setEntryNotes("");
       setEntryBillNo("");
+      setParchiPhotoUri(null);
       await fetchHistory();
       onRefreshList?.();
     } catch (err: any) {
@@ -315,7 +353,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
     }
   };
 
-  // 5. WhatsApp Reminder
+  // 5. WhatsApp Full Statement Share
   const handleWhatsAppReminder = () => {
     const message = `Namaste ${customer.customer_name} ji, ${shopName} se aapka khata baki hisab ${formatCurrency(currentBal)} hai. Kripya samay par chukta karein. Dhanyawad!`;
     const cleanPhone = customer.customer_mobile.replace(/[^0-9]/g, "");
@@ -330,7 +368,32 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
     });
   };
 
-  // 6. Request Closure (Dual-OTP)
+  // 6. Save Credit Limit
+  const handleSaveCreditLimit = async () => {
+    const limit = parseFloat(newCreditLimitInput);
+    if (isNaN(limit) || limit < 0) {
+      Alert.alert("Invalid Limit", "Kripya sahi credit seema enter karein.");
+      return;
+    }
+
+    setIsSavingCreditLimit(true);
+    try {
+      await apiClient.put(
+        Endpoints.MERCHANT.KHATA_CREDIT_LIMIT(customer.customer_mobile),
+        { credit_limit: limit }
+      );
+      Alert.alert("Seema Set Ho Gayi", `Customer ki Credit Limit ${formatCurrency(limit)} set ho gayi hai.`);
+      setCreditLimitModalVisible(false);
+      await fetchHistory();
+      onRefreshList?.();
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Credit limit update nahi ho payi.");
+    } finally {
+      setIsSavingCreditLimit(false);
+    }
+  };
+
+  // 7. Request Closure (Dual-OTP)
   const handleRequestClosure = async () => {
     if (currentBal > 0) {
       Alert.alert("Balance Pending", "Khata tabhi band ho sakta hai jab baki hisab ₹0 ho. Kripya pehle baki payment clear karein.");
@@ -355,7 +418,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
     }
   };
 
-  // 7. Verify Closure OTP
+  // 8. Verify Closure OTP
   const handleVerifyClosureOTP = async () => {
     if (!closureOtpInput.trim() || closureOtpInput.trim().length !== 6) {
       Alert.alert("OTP Required", "Kripya customer se mila 6-digit OTP enter karein.");
@@ -379,6 +442,11 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
       setIsClosurePending(false);
     }
   };
+
+  // Live Counter QR URL Generator
+  const targetQrAmt = parseFloat(qrAmount) > 0 ? parseFloat(qrAmount) : currentBal;
+  const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(shopName)}&am=${targetQrAmt}&cu=INR&tn=${encodeURIComponent(`Khata_${customer.customer_mobile}`)}`;
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(upiUri)}&size=250x250`;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -409,22 +477,35 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
               {customer.is_registered && (
                 <View style={styles.verifiedBadge}>
                   <ShieldCheck size={12} color="#16a34a" />
-                  <Text style={styles.verifiedBadgeText}>Shopsilo App</Text>
+                  <Text style={styles.verifiedBadgeText}>App User</Text>
                 </View>
               )}
             </View>
             <Text style={[styles.customerMobile, { color: colors.textMuted }]}>
-              📞 {customer.customer_mobile}
+              📞 +91 {customer.customer_mobile}
             </Text>
           </View>
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setPdfModalVisible(true)}
-            style={[styles.pdfIconBtn, { backgroundColor: "#eff6ff" }]}
-          >
-            <FileText size={18} color="#2563eb" />
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setQrAmount(currentBal > 0 ? String(currentBal) : "100");
+                setCounterQrVisible(true);
+              }}
+              style={[styles.pdfIconBtn, { backgroundColor: "#f0fdf4" }]}
+            >
+              <QrCode size={18} color="#16a34a" />
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setPdfModalVisible(true)}
+              style={[styles.pdfIconBtn, { backgroundColor: "#eff6ff" }]}
+            >
+              <FileText size={18} color="#2563eb" />
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -448,12 +529,26 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                 </Text>
               </View>
 
-              {closureStatus === "CLOSED" && (
-                <View style={styles.closedBadge}>
-                  <Lock size={12} color="#64748b" />
-                  <Text style={styles.closedBadgeText}>CLOSED</Text>
-                </View>
-              )}
+              <View style={{ alignItems: "flex-end", gap: 6 }}>
+                {closureStatus === "CLOSED" ? (
+                  <View style={styles.closedBadge}>
+                    <Lock size={12} color="#64748b" />
+                    <Text style={styles.closedBadgeText}>CLOSED</Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setQrAmount(currentBal > 0 ? String(currentBal) : "100");
+                      setCounterQrVisible(true);
+                    }}
+                    style={[styles.counterQrQuickBtn, { backgroundColor: "#16a34a" }]}
+                  >
+                    <QrCode size={13} color="#fff" />
+                    <Text style={styles.counterQrQuickBtnText}>Counter QR</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
 
             {/* Promise to Pay (Kisht Target) */}
@@ -486,23 +581,39 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
 
             {/* Credit Limit & OTP Info */}
             <View style={styles.balanceMetaRow}>
-              {customer.credit_limit > 0 && (
-                <Text style={[styles.creditLimitText, { color: colors.textMuted }]}>
-                  Seema: {formatCurrency(customer.credit_limit)}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setNewCreditLimitInput(activeCreditLimit > 0 ? String(activeCreditLimit) : "5000");
+                  setCreditLimitModalVisible(true);
+                }}
+                style={styles.creditLimitPressable}
+              >
+                <Sliders size={11} color={colors.primary} />
+                <Text style={[styles.creditLimitText, { color: colors.primary }]}>
+                  {activeCreditLimit > 0 ? `Seema: ${formatCurrency(activeCreditLimit)} (Tap to edit)` : "+ Set Credit Limit"}
                 </Text>
+              </Pressable>
+
+              {activeCreditLimit > 0 && currentBal > activeCreditLimit && (
+                <View style={styles.limitExceededBadge}>
+                  <AlertTriangle size={10} color="#b91c1c" />
+                  <Text style={styles.limitExceededText}>Limit Cross</Text>
+                </View>
               )}
+
               {customer.credit_otp_required && (
                 <View style={styles.otpProtectedBadge}>
                   <ShieldCheck size={11} color="#0284c7" />
                   <Text style={styles.otpProtectedBadgeText}>
-                    OTP Suraksha &gt; {formatCurrency(customer.credit_otp_threshold || 1000)}
+                    OTP &gt; {formatCurrency(customer.credit_otp_threshold || 1000)}
                   </Text>
                 </View>
               )}
             </View>
           </View>
 
-          {/* QUICK-ENTRY ROW (जैसे कॉपी पे लिखते हैं) */}
+          {/* QUICK-ENTRY ROW (Udhar Diya + / Jama Liya -) */}
           {closureStatus !== "CLOSED" && (
             <View style={[styles.quickEntryCard, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
@@ -521,7 +632,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
 
                 <TextInput
                   style={[styles.notesInput, { color: colors.text, borderColor: colors.surfaceBorder }]}
-                  placeholder="Samaan / Vivaran (e.g. 2 packet dudh, chini)"
+                  placeholder="Samaan / Vivaran (e.g. 2 packet doodh, chini)"
                   placeholderTextColor={colors.textMuted}
                   value={entryNotes}
                   onChangeText={setEntryNotes}
@@ -555,7 +666,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                       { color: parchiPhotoUri ? "#16a34a" : colors.text },
                     ]}
                   >
-                    {parchiPhotoUri ? "Photo Attached ✓" : "+ Parchi Photo"}
+                    {parchiPhotoUri ? "Photo Attached ✅" : "+ Parchi Photo"}
                   </Text>
                 </Pressable>
               </View>
@@ -600,29 +711,30 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
           {/* TRANSACTIONS LEDGER TIMELINE */}
           <View style={styles.timelineHeader}>
             <Text style={[styles.timelineTitle, { color: colors.text }]}>
-              Khata Passbook Entries ({history?.transactions?.length ?? 0})
+              Bahi-Khata Panna (Passbook History)
             </Text>
             <Text style={[styles.timelineSub, { color: colors.textMuted }]}>
-              Customer ke sath live dual-sync ledger
+              Har entry ka complete audit trail aur parchi saboot
             </Text>
           </View>
 
           {isLoading ? (
-            <ActivityIndicator style={{ marginVertical: 20 }} color={colors.primary} />
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 20 }} />
           ) : !history?.transactions || history.transactions.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Receipt size={32} color={colors.textMuted} />
+            <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+              <BookOpen size={28} color={colors.textMuted} />
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-                Is panna par abhi koi entry nahi hai. Upar diye form se pehla hisab likhein.
+                Is panna par abhi koi entry nahi hai. Upar se pehla Udhar ya Jama record karein.
               </Text>
             </View>
           ) : (
             history.transactions.map((tx: any) => {
-              const isReversal = tx.transaction_type === "reversal" || tx.type === "REVERSAL" || !!tx.reversal_of_id;
-              const isCredit = (tx.transaction_type === "credit" || tx.type === "GIVE_CREDIT") && !isReversal;
-              const isDisputed = tx.status === "DISPUTED";
-              const isResolvedAccepted = tx.status === "RESOLVED_ACCEPTED";
-              const isResolvedRejected = tx.status === "RESOLVED_REJECTED";
+              const isCredit = tx.type === "GIVE_CREDIT" || tx.type === "CREDIT";
+              const isPayment = tx.type === "RECEIVE_PAYMENT" || tx.type === "PAYMENT";
+              const isReversal = tx.type === "REVERSAL";
+              const hasDispute = tx.status === "DISPUTED" || tx.dispute_status === "PENDING";
+              const isResolvedAccept = tx.status === "RESOLVED_ACCEPTED" || tx.dispute_status === "ACCEPTED";
+              const isResolvedReject = tx.status === "RESOLVED_REJECTED" || tx.dispute_status === "REJECTED";
 
               return (
                 <View
@@ -631,7 +743,7 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                     styles.txRow,
                     {
                       backgroundColor: colors.surface,
-                      borderColor: isDisputed ? "#ef4444" : isReversal ? "#f59e0b" : colors.surfaceBorder,
+                      borderColor: hasDispute ? "#fca5a5" : colors.surfaceBorder,
                     },
                   ]}
                 >
@@ -641,43 +753,27 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                         style={[
                           styles.txIconWrap,
                           {
-                            backgroundColor: isReversal
-                              ? "#fef3c7"
-                              : isCredit
+                            backgroundColor: isCredit
                               ? "#fee2e2"
-                              : "#dcfce7",
+                              : isPayment
+                              ? "#dcfce7"
+                              : "#fef3c7",
                           },
                         ]}
                       >
-                        {isReversal ? (
-                          <RotateCcw size={16} color="#d97706" />
-                        ) : isCredit ? (
+                        {isCredit ? (
                           <ArrowDownLeft size={16} color="#dc2626" />
-                        ) : (
+                        ) : isPayment ? (
                           <ArrowUpRight size={16} color="#16a34a" />
+                        ) : (
+                          <RotateCcw size={16} color="#d97706" />
                         )}
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Text style={[styles.txTypeText, { color: colors.text }]}>
-                            {isReversal
-                              ? "Galti Sudhar (Reversal)"
-                              : isCredit
-                              ? "Udhar Diya (Debit)"
-                              : "Jama Liya (Credit)"}
-                          </Text>
-                          {isResolvedAccepted && (
-                            <View style={styles.resolvedAcceptedBadge}>
-                              <Text style={styles.resolvedBadgeText}>Claim Accepted</Text>
-                            </View>
-                          )}
-                          {isResolvedRejected && (
-                            <View style={styles.resolvedRejectedBadge}>
-                              <Text style={styles.resolvedBadgeText}>Entry Verified</Text>
-                            </View>
-                          )}
-                        </View>
 
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.txTypeText, { color: colors.text }]}>
+                          {isCredit ? "Udhar Diya" : isPayment ? "Jama Liya" : "Galti Sudhar (Reversal)"}
+                        </Text>
                         <Text style={[styles.txDate, { color: colors.textMuted }]}>
                           {new Date(tx.created_at).toLocaleString("en-IN", {
                             day: "numeric",
@@ -696,7 +792,9 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                             Bill #{tx.bill_number}
                           </Text>
                         )}
-                        {(!!tx.parchi_image_url || !!tx.items_summary) && (
+
+                        {/* Parchi Photo Attachment Link */}
+                        {!!tx.parchi_image_url && (
                           <Pressable
                             accessibilityRole="button"
                             onPress={() => {
@@ -705,8 +803,8 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                             }}
                             style={styles.viewParchiLink}
                           >
-                            <Eye size={12} color="#2563eb" />
-                            <Text style={styles.viewParchiLinkText}>Parchi / Samaan Dekhein</Text>
+                            <Paperclip size={12} color="#2563eb" />
+                            <Text style={styles.viewParchiLinkText}>Parchi Saboot Dekhein</Text>
                           </Pressable>
                         )}
                       </View>
@@ -717,27 +815,22 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                         style={[
                           styles.txAmount,
                           {
-                            color: isReversal
-                              ? "#d97706"
-                              : isCredit
-                              ? "#dc2626"
-                              : "#16a34a",
+                            color: isCredit ? "#dc2626" : isPayment ? "#16a34a" : "#d97706",
                           },
                         ]}
                       >
-                        {isReversal ? "↺ " : isCredit ? "+₹" : "-₹"}
-                        {tx.amount.toLocaleString("en-IN")}
+                        {isCredit ? `+ ${formatCurrency(tx.amount)}` : `- ${formatCurrency(tx.amount)}`}
                       </Text>
-                      {tx.balance_after != null && (
+                      {tx.balance_after !== undefined && (
                         <Text style={[styles.txBalAfter, { color: colors.textMuted }]}>
-                          Baki: ₹{tx.balance_after.toLocaleString("en-IN")}
+                          Baki: {formatCurrency(tx.balance_after)}
                         </Text>
                       )}
                     </View>
                   </View>
 
-                  {/* Typo Correction Action Button */}
-                  {!isReversal && !isDisputed && closureStatus !== "CLOSED" && (
+                  {/* Typo Reversal Button */}
+                  {tx.is_reversible && !isReversal && (
                     <View style={styles.txFooterRow}>
                       <Pressable
                         accessibilityRole="button"
@@ -752,35 +845,45 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
                     </View>
                   )}
 
-                  {/* Dispute Banner with Merchant Resolution Options */}
-                  {isDisputed && (
+                  {/* Customer Dispute Resolution Block */}
+                  {hasDispute && (
                     <View style={styles.disputeSection}>
                       <View style={styles.disputeNotice}>
-                        <AlertTriangle size={14} color="#ef4444" />
+                        <AlertTriangle size={13} color="#ef4444" />
                         <Text style={styles.disputeNoticeText}>
-                          Customer Aappatti: {tx.dispute_reason || "Dispute raised by customer"}
+                          Customer Dispute: "{tx.dispute_reason || "Entry me aappatti hai"}"
                         </Text>
                       </View>
-
                       <View style={styles.disputeActionButtons}>
                         <Pressable
                           accessibilityRole="button"
                           onPress={() => handleOpenDisputeResolve(tx, "ACCEPT")}
                           style={[styles.disputeAcceptBtn, { backgroundColor: "#16a34a" }]}
                         >
-                          <Check size={14} color="#fff" />
-                          <Text style={styles.disputeActionBtnText}>Claim Manzoor (Reverse)</Text>
+                          <Check size={12} color="#fff" />
+                          <Text style={styles.disputeActionBtnText}>Accept (Reverse Entry)</Text>
                         </Pressable>
-
                         <Pressable
                           accessibilityRole="button"
                           onPress={() => handleOpenDisputeResolve(tx, "REJECT")}
                           style={[styles.disputeRejectBtn, { borderColor: "#ef4444" }]}
                         >
-                          <X size={14} color="#ef4444" />
-                          <Text style={[styles.disputeActionBtnText, { color: "#ef4444" }]}>Entry Sahi Hai</Text>
+                          <X size={12} color="#ef4444" />
+                          <Text style={[styles.disputeActionBtnText, { color: "#ef4444" }]}>Bill Sahi Hai</Text>
                         </Pressable>
                       </View>
+                    </View>
+                  )}
+
+                  {/* Resolved Badges */}
+                  {isResolvedAccept && (
+                    <View style={styles.resolvedAcceptedBadge}>
+                      <Text style={styles.resolvedBadgeText}>Dispute Solved (Entry Reversed)</Text>
+                    </View>
+                  )}
+                  {isResolvedReject && (
+                    <View style={styles.resolvedRejectedBadge}>
+                      <Text style={[styles.resolvedBadgeText, { color: "#0284c7" }]}>Dispute Verified at Counter</Text>
                     </View>
                   )}
                 </View>
@@ -788,264 +891,342 @@ export const KhataPannaView: React.FC<KhataPannaViewProps> = ({
             })
           )}
 
-          {/* BOTTOM ACTIONS (REMINDER, PDF, DUAL-OTP CLOSURE) */}
+          {/* BOTTOM QUICK TOOLS */}
           <View style={styles.bottomToolbar}>
-            {currentBal > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleWhatsAppReminder}
+              style={[styles.toolBtn, { backgroundColor: "#25D366" }]}
+            >
+              <MessageCircle size={16} color="#fff" />
+              <Text style={styles.toolBtnText}>WhatsApp Reminder Bhejein</Text>
+            </Pressable>
+
+            {currentBal === 0 && closureStatus !== "CLOSED" && (
               <Pressable
                 accessibilityRole="button"
-                onPress={handleWhatsAppReminder}
-                style={[styles.toolBtn, { backgroundColor: "#22c55e" }]}
+                onPress={handleRequestClosure}
+                disabled={isClosurePending}
+                style={[styles.toolBtn, { backgroundColor: "#475569" }]}
               >
-                <MessageCircle size={16} color="#fff" />
-                <Text style={styles.toolBtnText}>WhatsApp Reminder</Text>
+                {isClosurePending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Lock size={16} color="#fff" />
+                    <Text style={styles.toolBtnText}>Khata Archive / Band Karein</Text>
+                  </>
+                )}
               </Pressable>
             )}
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setPdfModalVisible(true)}
-              style={[styles.toolBtn, { backgroundColor: "#3b82f6" }]}
-            >
-              <FileText size={16} color="#fff" />
-              <Text style={styles.toolBtnText}>Statement PDF</Text>
-            </Pressable>
-
-            {/* Dual-OTP Closure Button */}
-            <Pressable
-              accessibilityRole="button"
-              onPress={handleRequestClosure}
-              disabled={isClosurePending || closureStatus === "CLOSED"}
-              style={[
-                styles.toolBtn,
-                {
-                  backgroundColor: closureStatus === "CLOSED" ? "#64748b" : "#475569",
-                  opacity: currentBal > 0 ? 0.6 : 1,
-                },
-              ]}
-            >
-              <Lock size={16} color="#fff" />
-              <Text style={styles.toolBtnText}>
-                {closureStatus === "CLOSED"
-                  ? "Khata Band Hai (Closed)"
-                  : closureStatus === "PENDING_OTP"
-                  ? "Closure OTP Verify Karein"
-                  : "Khata Band Karein (Dual-OTP)"}
-              </Text>
-            </Pressable>
           </View>
         </ScrollView>
-
-        {/* Typo Reversal Reason Modal */}
-        <Modal
-          visible={reversalModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setReversalModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
-              <View style={styles.promptHeader}>
-                <RotateCcw size={20} color="#d97706" />
-                <Text style={[styles.promptTitle, { color: colors.text }]}>
-                  Galti Sudhar Entry (Reversal)
-                </Text>
-              </View>
-              <Text style={[styles.promptSub, { color: colors.textMuted }]}>
-                Is transaction ki rakam ({reversingTx ? formatCurrency(reversingTx.amount) : ""}) ka official reversal passbook me judega aur balance theek ho jayega.
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.notesInput,
-                  { color: colors.text, borderColor: colors.surfaceBorder, height: 46, borderRadius: 10 },
-                ]}
-                placeholder="Sudhar ka karan (e.g. Galat rakam likh di thi)"
-                placeholderTextColor={colors.textMuted}
-                value={reversalReason}
-                onChangeText={setReversalReason}
-              />
-
-              <View style={styles.promptActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setReversalModalVisible(false)}
-                  style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
-                >
-                  <Text style={[styles.cancelText, { color: colors.text }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleConfirmReversal}
-                  disabled={isReversing}
-                  style={[styles.confirmBtn, { backgroundColor: "#d97706" }]}
-                >
-                  {isReversing ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.confirmText}>Confirm Reversal</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Dispute Resolution Modal */}
-        <Modal
-          visible={disputeModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setDisputeModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
-              <View style={styles.promptHeader}>
-                {disputeAction === "ACCEPT" ? (
-                  <CheckCircle2 size={20} color="#16a34a" />
-                ) : (
-                  <AlertCircle size={20} color="#ef4444" />
-                )}
-                <Text style={[styles.promptTitle, { color: colors.text }]}>
-                  {disputeAction === "ACCEPT" ? "Claim Manzoor Karein" : "Entry Barkarar Rakhein"}
-                </Text>
-              </View>
-              <Text style={[styles.promptSub, { color: colors.textMuted }]}>
-                {disputeAction === "ACCEPT"
-                  ? "Customer ka claim accept karne par ye entry automatically reverse ho jayegi aur balance ghat jayega."
-                  : "Agar entry counter par sahi thi, to apna note likhkar is dispute ko close karein."}
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.notesInput,
-                  { color: colors.text, borderColor: colors.surfaceBorder, height: 46, borderRadius: 10 },
-                ]}
-                placeholder="Dukandar ka note / Vivaran"
-                placeholderTextColor={colors.textMuted}
-                value={disputeNotes}
-                onChangeText={setDisputeNotes}
-              />
-
-              <View style={styles.promptActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setDisputeModalVisible(false)}
-                  style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
-                >
-                  <Text style={[styles.cancelText, { color: colors.text }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleConfirmDisputeResolution}
-                  disabled={isResolvingDispute}
-                  style={[
-                    styles.confirmBtn,
-                    { backgroundColor: disputeAction === "ACCEPT" ? "#16a34a" : "#ef4444" },
-                  ]}
-                >
-                  {isResolvingDispute ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.confirmText}>
-                      {disputeAction === "ACCEPT" ? "Accept & Reverse" : "Keep Entry"}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Dual-OTP Closure Modal */}
-        <Modal
-          visible={closureModalVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setClosureModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
-              <View style={styles.promptHeader}>
-                <Lock size={20} color="#dc2626" />
-                <Text style={[styles.promptTitle, { color: colors.text }]}>
-                  Customer OTP Enter Karein
-                </Text>
-              </View>
-              <Text style={[styles.promptSub, { color: colors.textMuted }]}>
-                Customer se unke phone / Shopsilo app par mila 6-digit OTP puchhein:
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.otpInput,
-                  { color: colors.text, borderColor: colors.surfaceBorder, backgroundColor: colors.background },
-                ]}
-                placeholder="000000"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
-                maxLength={6}
-                value={closureOtpInput}
-                onChangeText={setClosureOtpInput}
-              />
-
-              <View style={styles.promptActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setClosureModalVisible(false)}
-                  style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
-                >
-                  <Text style={[styles.cancelText, { color: colors.text }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleVerifyClosureOTP}
-                  disabled={isClosurePending}
-                  style={[styles.confirmBtn, { backgroundColor: "#16a34a" }]}
-                >
-                  {isClosurePending ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.confirmText}>Verify &amp; Close Khata</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* In-App PDF Modal */}
-        <ParchiViewerModal
-          visible={parchiViewerVisible}
-          onClose={() => {
-            setParchiViewerVisible(false);
-            setViewingParchiTx(null);
-          }}
-          parchiUrl={viewingParchiTx?.parchi_image_url}
-          itemsSummary={viewingParchiTx?.items_summary}
-          billNumber={viewingParchiTx?.bill_number}
-          amount={viewingParchiTx?.amount}
-          date={viewingParchiTx?.created_at}
-          customerName={customer.customer_name}
-        />
-
-        <PromiseToPayModal
-          visible={ptpModalVisible}
-          onClose={() => setPtpModalVisible(false)}
-          customerName={customer.customer_name}
-          currentBalance={currentBal}
-          initialPromiseDate={(history as any)?.customer?.promise_to_pay_date || customer.promise_to_pay_date}
-          initialTarget={customer.installment_target}
-          onSave={handleSavePromiseToPay}
-        />
-
-        <InAppPDFModal
-          visible={pdfModalVisible}
-          onClose={() => setPdfModalVisible(false)}
-          pdfUrl={Endpoints.MERCHANT.KHATA_STATEMENT_PDF(customer.customer_mobile)}
-          title={`Khata Statement - ${customer.customer_name}`}
-          filename={`Khata_${customer.customer_name.replace(/\s+/g, "_")}_${customer.customer_mobile}.pdf`}
-        />
       </KeyboardAvoidingView>
+
+      {/* MODAL 1: LIVE COUNTER UPI QR */}
+      <Modal
+        visible={counterQrVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCounterQrVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.promptHeader}>
+              <QrCode size={20} color="#16a34a" />
+              <Text style={[styles.promptTitle, { color: colors.text }]}>Counter UPI QR Code</Text>
+              <Pressable onPress={() => setCounterQrVisible(false)} style={{ marginLeft: "auto" }}>
+                <X size={18} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            <Text style={[styles.promptSub, { color: colors.textMuted }]}>
+              Customer ko scan karayein. Payment aate hi khata balance update karein.
+            </Text>
+
+            {/* Quick Amount Chips */}
+            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+              <Pressable
+                onPress={() => setQrAmount(String(currentBal))}
+                style={[styles.chipBtn, qrAmount === String(currentBal) && styles.chipBtnActive]}
+              >
+                <Text style={[styles.chipText, qrAmount === String(currentBal) && styles.chipTextActive]}>
+                  Full Due ({formatCurrency(currentBal)})
+                </Text>
+              </Pressable>
+              {["500", "1000", "2000"].map((v) => (
+                <Pressable
+                  key={v}
+                  onPress={() => setQrAmount(v)}
+                  style={[styles.chipBtn, qrAmount === v && styles.chipBtnActive]}
+                >
+                  <Text style={[styles.chipText, qrAmount === v && styles.chipTextActive]}>₹{v}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* QR Code Image */}
+            <View style={styles.qrContainer}>
+              <Image source={{ uri: qrImageUrl }} style={styles.qrImage} resizeMode="contain" />
+              <Text style={[styles.qrPayeeText, { color: colors.text }]}>{shopName}</Text>
+              <Text style={[styles.qrUpiText, { color: colors.textMuted }]}>{shopUpiId}</Text>
+              <Text style={[styles.qrAmountHighlight, { color: "#16a34a" }]}>
+                {formatCurrency(targetQrAmt)}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => setCounterQrVisible(false)}
+              style={[styles.confirmBtn, { backgroundColor: "#16a34a", width: "100%" }]}
+            >
+              <Text style={styles.confirmText}>Ho Gaya (Done)</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL 2: SET CREDIT LIMIT */}
+      <Modal
+        visible={creditLimitModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCreditLimitModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.promptHeader}>
+              <Sliders size={20} color={colors.primary} />
+              <Text style={[styles.promptTitle, { color: colors.text }]}>Set Credit Limit (Seema)</Text>
+            </View>
+            <Text style={[styles.promptSub, { color: colors.textMuted }]}>
+              {customer.customer_name} ke liye maximum udhar seema set karein taaki over-crediting se bacha ja sake.
+            </Text>
+
+            <TextInput
+              style={[styles.otpInput, { color: colors.text, borderColor: colors.surfaceBorder, letterSpacing: 0, textAlign: "left" }]}
+              placeholder="e.g. 5000"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              value={newCreditLimitInput}
+              onChangeText={setNewCreditLimitInput}
+            />
+
+            <View style={styles.promptActions}>
+              <Pressable
+                onPress={() => setCreditLimitModalVisible(false)}
+                style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
+              >
+                <Text style={[styles.cancelText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleSaveCreditLimit}
+                disabled={isSavingCreditLimit}
+                style={[styles.confirmBtn, { backgroundColor: colors.primary }]}
+              >
+                {isSavingCreditLimit ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.confirmText}>Save Seema</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL 3: TYPO REVERSAL */}
+      <Modal
+        visible={reversalModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReversalModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.promptHeader}>
+              <RotateCcw size={20} color="#d97706" />
+              <Text style={[styles.promptTitle, { color: colors.text }]}>Entry Galti Sudhar (Reversal)</Text>
+            </View>
+            <Text style={[styles.promptSub, { color: colors.textMuted }]}>
+              Kya aapse entry likhte waqt koi typing mistake hui hai? Reversal entry se galat rakam subtract ho jayegi aur khata audit safe rahega.
+            </Text>
+
+            <TextInput
+              style={[styles.otpInput, { color: colors.text, borderColor: colors.surfaceBorder, letterSpacing: 0, textAlign: "left" }]}
+              placeholder="Sudharne ka karan (e.g. 500 ki jagah 5000 tap ho gaya)"
+              placeholderTextColor={colors.textMuted}
+              value={reversalReason}
+              onChangeText={setReversalReason}
+            />
+
+            <View style={styles.promptActions}>
+              <Pressable
+                onPress={() => setReversalModalVisible(false)}
+                style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
+              >
+                <Text style={[styles.cancelText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleConfirmReversal}
+                disabled={isReversing}
+                style={[styles.confirmBtn, { backgroundColor: "#d97706" }]}
+              >
+                {isReversing ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.confirmText}>Reversal Darj Karein</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL 4: DISPUTE RESOLUTION */}
+      <Modal
+        visible={disputeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDisputeModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.promptHeader}>
+              <HelpCircle size={20} color={disputeAction === "ACCEPT" ? "#16a34a" : "#ef4444"} />
+              <Text style={[styles.promptTitle, { color: colors.text }]}>
+                {disputeAction === "ACCEPT" ? "Dispute Sweekar Karein" : "Dispute Reject Karein"}
+              </Text>
+            </View>
+            <Text style={[styles.promptSub, { color: colors.textMuted }]}>
+              Customer Dispute: "{resolvingTx?.dispute_reason || "Entry aappatti"}"
+            </Text>
+
+            <TextInput
+              style={[styles.otpInput, { color: colors.text, borderColor: colors.surfaceBorder, letterSpacing: 0, textAlign: "left" }]}
+              placeholder="Faisla Notes (optional)"
+              placeholderTextColor={colors.textMuted}
+              value={disputeNotes}
+              onChangeText={setDisputeNotes}
+            />
+
+            <View style={styles.promptActions}>
+              <Pressable
+                onPress={() => setDisputeModalVisible(false)}
+                style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
+              >
+                <Text style={[styles.cancelText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleConfirmDisputeResolution}
+                disabled={isResolvingDispute}
+                style={[
+                  styles.confirmBtn,
+                  { backgroundColor: disputeAction === "ACCEPT" ? "#16a34a" : "#ef4444" },
+                ]}
+              >
+                {isResolvingDispute ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.confirmText}>Confirm Decision</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL 5: DUAL-OTP CLOSURE */}
+      <Modal
+        visible={closureModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClosureModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.promptCard, { backgroundColor: colors.surface }]}>
+            <View style={styles.promptHeader}>
+              <Lock size={20} color="#64748b" />
+              <Text style={[styles.promptTitle, { color: colors.text }]}>Khata Band OTP Verify</Text>
+            </View>
+            <Text style={[styles.promptSub, { color: colors.textMuted }]}>
+              Customer ke passbook par bheja gaya 6-digit OTP yahan enter karein:
+            </Text>
+
+            {!!closureCustomerOTP && (
+              <View style={{ backgroundColor: "#fef3c7", padding: 8, borderRadius: 6 }}>
+                <Text style={{ fontSize: 11, color: "#92400e", fontWeight: "700" }}>
+                  Dev/Debug OTP: {closureCustomerOTP}
+                </Text>
+              </View>
+            )}
+
+            <TextInput
+              style={[styles.otpInput, { color: colors.text, borderColor: colors.surfaceBorder }]}
+              placeholder="XXXXXX"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={6}
+              value={closureOtpInput}
+              onChangeText={setClosureOtpInput}
+            />
+
+            <View style={styles.promptActions}>
+              <Pressable
+                onPress={() => setClosureModalVisible(false)}
+                style={[styles.cancelBtn, { borderColor: colors.surfaceBorder }]}
+              >
+                <Text style={[styles.cancelText, { color: colors.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleVerifyClosureOTP}
+                disabled={isClosurePending}
+                style={[styles.confirmBtn, { backgroundColor: "#16a34a" }]}
+              >
+                {isClosurePending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.confirmText}>Verify & Archive</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PARCHI FULL-SCREEN VIEWER */}
+      <ParchiViewerModal
+        visible={parchiViewerVisible}
+        onClose={() => {
+          setParchiViewerVisible(false);
+          setViewingParchiTx(null);
+        }}
+        parchiUrl={viewingParchiTx?.parchi_image_url || undefined}
+        itemsSummary={viewingParchiTx?.notes || viewingParchiTx?.items_summary}
+        billNumber={viewingParchiTx?.bill_number}
+        amount={viewingParchiTx?.amount}
+        date={viewingParchiTx?.created_at}
+        customerName={customer.customer_name}
+      />
+
+      {/* PROMISE TO PAY MODAL */}
+      <PromiseToPayModal
+        visible={ptpModalVisible}
+        onClose={() => setPtpModalVisible(false)}
+        customerName={customer.customer_name}
+        currentBalance={currentBal}
+        initialPromiseDate={(history as any)?.customer?.promise_to_pay_date || customer.promise_to_pay_date}
+        initialTarget={customer.installment_target}
+        onSave={handleSavePromiseToPay}
+      />
+
+      {/* STATEMENT PDF MODAL */}
+      <InAppPDFModal
+        visible={pdfModalVisible}
+        onClose={() => setPdfModalVisible(false)}
+        pdfUrl={Endpoints.MERCHANT.KHATA_STATEMENT_PDF(customer.customer_mobile)}
+        title={`${customer.customer_name} - Khata Statement`}
+        filename={`Khata_${customer.customer_mobile}.pdf`}
+      />
     </Modal>
   );
 };
@@ -1073,6 +1254,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    flexWrap: "wrap",
   },
   customerName: {
     fontSize: 16,
@@ -1129,6 +1311,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 2,
   },
+  counterQrQuickBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  counterQrQuickBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
   closedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1156,6 +1351,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    flex: 1,
   },
   ptpTitle: {
     fontSize: 12,
@@ -1176,44 +1372,39 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
-  snapParchiBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginLeft: 8,
-  },
-  snapParchiText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  viewParchiLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 4,
-    backgroundColor: "#eff6ff",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    alignSelf: "flex-start",
-  },
-  viewParchiLinkText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#2563eb",
-  },
   balanceMetaRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     marginTop: 4,
+    flexWrap: "wrap",
+  },
+  creditLimitPressable: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(37,99,235,0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   creditLimitText: {
     fontSize: 11,
+    fontWeight: "700",
+  },
+  limitExceededBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#fee2e2",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  limitExceededText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#b91c1c",
   },
   otpProtectedBadge: {
     flexDirection: "row",
@@ -1271,6 +1462,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     fontSize: 12,
   },
+  snapParchiBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginLeft: 8,
+  },
+  snapParchiText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
   actionButtonsRow: {
     flexDirection: "row",
     gap: 10,
@@ -1314,6 +1519,8 @@ const styles = StyleSheet.create({
     padding: 24,
     alignItems: "center",
     gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
   },
   emptyText: {
     fontSize: 12,
@@ -1356,7 +1563,22 @@ const styles = StyleSheet.create({
   },
   txBillNo: {
     fontSize: 11,
-    marginTop: 1,
+  },
+  viewParchiLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
+    backgroundColor: "#eff6ff",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+  viewParchiLinkText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563eb",
   },
   txRight: {
     alignItems: "flex-end",
@@ -1436,12 +1658,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    alignSelf: "flex-start",
   },
   resolvedRejectedBadge: {
     backgroundColor: "#e0f2fe",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    alignSelf: "flex-start",
   },
   resolvedBadgeText: {
     fontSize: 9,
@@ -1526,5 +1750,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#fff",
+  },
+  chipBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+  },
+  chipBtnActive: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#16a34a",
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  chipTextActive: {
+    color: "#16a34a",
+  },
+  qrContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    gap: 6,
+  },
+  qrImage: {
+    width: 200,
+    height: 200,
+  },
+  qrPayeeText: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  qrUpiText: {
+    fontSize: 11,
+  },
+  qrAmountHighlight: {
+    fontSize: 18,
+    fontWeight: "900",
   },
 });
