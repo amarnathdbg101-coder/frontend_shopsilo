@@ -73,8 +73,38 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
     }
   };
 
+  // Robust CSV line tokenizer that handles quotes, commas inside strings, and escapes
+  const parseCSVLine = (line: string, delimiter: string = ","): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result.map((c) => c.replace(/^["']|["']$/g, "").trim());
+  };
+
   // 2. Parse CSV String Content
   const parseCSVContent = (content: string, fileName?: string) => {
+    // Strip UTF-8 BOM if present (e.g. Excel export)
+    if (content.charCodeAt(0) === 0xfeff) {
+      content = content.slice(1);
+    }
+
     const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
     if (lines.length === 0) {
@@ -82,8 +112,17 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       return;
     }
 
+    // Detect delimiter: comma (,), semicolon (;), or tab (\t)
+    const firstLine = lines[0];
+    let delimiter = ",";
+    if (firstLine.includes("\t")) {
+      delimiter = "\t";
+    } else if ((firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length) {
+      delimiter = ";";
+    }
+
     // Determine if line 0 is a header row or direct data
-    const firstLineLower = lines[0].toLowerCase();
+    const firstLineLower = firstLine.toLowerCase();
     const hasHeaderKeywords =
       firstLineLower.includes("name") ||
       firstLineLower.includes("price") ||
@@ -104,7 +143,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
 
     if (hasHeaderKeywords) {
       startIndex = 1; // Skip header row
-      const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const header = parseCSVLine(lines[0], delimiter).map((h) => h.toLowerCase());
 
       nameIdx = header.findIndex((h) => h.includes("name") || h.includes("item") || h.includes("title"));
       skuIdx = header.findIndex((h) => h.includes("sku") || h.includes("code") || h.includes("barcode"));
@@ -112,7 +151,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       costIdx = header.findIndex((h) => h.includes("cost") || h.includes("buy") || h.includes("wholesale"));
       stockIdx = header.findIndex((h) => h.includes("stock") || h.includes("qty") || h.includes("quantity"));
       minIdx = header.findIndex((h) => h.includes("min") || h.includes("threshold"));
-      descIdx = header.findIndex((h) => h.includes("desc") || h.includes("details"));
+      descIdx = header.findIndex((h) => h.includes("desc") || h.includes("detail"));
 
       if (nameIdx === -1) nameIdx = 0;
       if (priceIdx === -1) priceIdx = 1;
@@ -121,7 +160,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
     const items: BulkImportItem[] = [];
 
     for (let i = startIndex; i < lines.length; i++) {
-      const row = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+      const row = parseCSVLine(lines[i], delimiter);
       if (row.length === 0) continue;
 
       const name = nameIdx < row.length ? row[nameIdx] : "";
@@ -144,12 +183,12 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
 
       items.push({
         name,
-        sku,
+        sku: sku || undefined,
         price: isNaN(price) || price <= 0 ? 10 : price,
         cost_price: isNaN(costPrice as number) ? undefined : costPrice,
         stock_quantity: isNaN(stockQty) ? 10 : stockQty,
         min_stock: isNaN(minStock) ? 5 : minStock,
-        description: desc,
+        description: desc || undefined,
       });
     }
 
@@ -162,7 +201,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
     Alert.alert("CSV Parsed 📄", `Found ${items.length} products ready for import!`);
   };
 
-  // 3. Pick & Parse CSV File Safely
+  // 3. Pick & Parse CSV File Safely with Multi-Fallback
   const handlePickCSVFile = async () => {
     try {
       setImportResult(null);
@@ -180,7 +219,14 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       }
 
       const res = await documentPickerModule.getDocumentAsync({
-        type: ["text/csv", "text/comma-separated-values", "application/csv", "*/*"],
+        type: [
+          "text/csv",
+          "text/comma-separated-values",
+          "application/csv",
+          "application/vnd.ms-excel",
+          "text/plain",
+          "*/*",
+        ],
         copyToCacheDirectory: true,
       });
 
@@ -189,8 +235,32 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       const file = res.assets[0];
       setIsParsing(true);
 
-      const fileContent = await FileSystem.readAsStringAsync(file.uri);
-      parseCSVContent(fileContent, file.name);
+      let fileContent = "";
+
+      // Strategy 1: Try FileSystem.readAsStringAsync
+      try {
+        fileContent = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: (FileSystem.EncodingType?.UTF8 as any) || "utf8",
+        });
+      } catch (fsErr) {
+        console.warn("[BulkImport] FileSystem read failed, trying fetch fallback:", fsErr);
+      }
+
+      // Strategy 2: Fallback to fetch (works reliably for content:// and file:// and blob:)
+      if (!fileContent && file.uri) {
+        try {
+          const response = await fetch(file.uri);
+          fileContent = await response.text();
+        } catch (fetchErr) {
+          console.warn("[BulkImport] Fetch read failed:", fetchErr);
+        }
+      }
+
+      if (!fileContent) {
+        throw new Error("File content is empty or unreadable");
+      }
+
+      parseCSVContent(fileContent, file.name || "products.csv");
     } catch (err: any) {
       console.warn("[BulkImport] File pick error:", err);
       Alert.alert("CSV File Error", "Unable to open file. Try using the 'Paste CSV Text' tab!");
