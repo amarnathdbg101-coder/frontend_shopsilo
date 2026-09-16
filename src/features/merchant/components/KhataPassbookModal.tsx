@@ -73,7 +73,7 @@ export const KhataPassbookModal: React.FC<KhataPassbookModalProps> = ({
   if (!customer) return null;
 
   const token = useAuthStore.getState().accessToken;
-  const baseURL = apiClient.defaults.baseURL || "https://shop-me-t48p.onrender.com";
+  const baseURL = apiClient.defaults.baseURL || "https://api.shopsilo.in";
   const passbookPdfUrl = `${baseURL}/shops/me/khata/${customer.customer_mobile}/statement.pdf${token ? `?token=${token}` : ""}`;
 
   const handleWhatsAppReminder = () => {

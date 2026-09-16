@@ -32,7 +32,7 @@ export const WebSocketOrderAlertListener: React.FC = () => {
   useEffect(() => {
     if (!isMerchant || !token) return;
 
-    const baseURL = apiClient.defaults.baseURL || "https://shop-me-t48p.onrender.com";
+    const baseURL = apiClient.defaults.baseURL || "https://api.shopsilo.in";
     const wsHost = baseURL.replace(/^http/, "ws");
     const wsUrl = `${wsHost}/shops/me/ws?token=${token}`;
 

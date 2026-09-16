@@ -37,7 +37,7 @@ export const POSReceiptModal: React.FC<POSReceiptModalProps> = ({
     qty: String(item.quantity || 1),
   }));
 
-  const baseURL = apiClient.defaults.baseURL || "https://shop-me-t48p.onrender.com";
+  const baseURL = apiClient.defaults.baseURL || "https://api.shopsilo.in";
   const pdfUrl = `${baseURL}/receipts/${billNumber}.pdf`;
 
   const handleWhatsAppShare = () => {

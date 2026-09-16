@@ -1,5 +1,5 @@
 // Live Go Backend Base URL on Render
-const LIVE_BACKEND_URL = "https://shop-me-t48p.onrender.com";
+const LIVE_BACKEND_URL = "https://api.shopsilo.in";
 
 export const Config = {
   // Prioritize process.env.EXPO_PUBLIC_API_URL for local LAN / development testing

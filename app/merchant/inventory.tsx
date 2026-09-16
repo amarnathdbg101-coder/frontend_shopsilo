@@ -177,7 +177,7 @@ function InventoryContent() {
     setReorderPdfOpen(true);
   };
 
-  const reorderPdfUrl = `${apiClient.defaults.baseURL || "https://shop-me-t48p.onrender.com"}/shops/me/inventory/reorder-sheet.pdf`;
+  const reorderPdfUrl = `${apiClient.defaults.baseURL || "https://api.shopsilo.in"}/shops/me/inventory/reorder-sheet.pdf`;
 
   return (
     <ScreenWrapper style={styles.container}>
