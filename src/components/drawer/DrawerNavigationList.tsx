@@ -35,13 +35,13 @@ export const DrawerNavigationList: React.FC<DrawerNavigationListProps> = ({
   const merchantBillingItems = [
     { label: "Dashboard Overview", path: "/merchant/dashboard", icon: Home, color: "#4f46e5" },
     { label: "Fast POS Billing", path: "/merchant/pos", icon: Receipt, color: "#16a34a" },
-    { label: "Store Product List & Catalog ðŸ“¦", path: "/merchant/inventory", icon: Boxes, color: "#ea580c" },
+    { label: "Store Product List & Catalog 📦", path: "/merchant/inventory", icon: Boxes, color: "#ea580c" },
     { label: "Customer Khata Book", path: "/merchant/khata", icon: BookOpen, color: "#dc2626" },
   ];
 
   const merchantCatalogItems = [
     { label: "Add New Product", path: "/merchant/add-product", icon: PackagePlus, color: "#059669" },
-    { label: "Mandi Khareed List ðŸ“", path: "/merchant/procurement-list", icon: ClipboardList, color: "#7c3aed" },
+    { label: "Mandi Khareed List 📝", path: "/merchant/procurement-list", icon: ClipboardList, color: "#7c3aed" },
     { label: "Offers & Live Promotions", path: "/merchant/offers", icon: Tag, color: "#ec4899" },
   ];
 
